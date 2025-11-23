@@ -21,6 +21,10 @@ STATE = {
     "ev-001": {"energy_kwh": 0.0},
 }
 
+# Track commanded setpoints and last measured power to smooth EV ramping
+SETPOINTS = {}
+LAST_P_ACTUAL = {}
+
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     print("[sim] connected to MQTT with result code", reason_code)
@@ -29,8 +33,44 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 
 
 def on_message(client, userdata, msg):
-    # You can inspect control messages later if you want
-    print("[sim] control msg:", msg.topic, msg.payload.decode())
+    topic = msg.topic
+    payload = msg.payload.decode()
+    print("[sim] control msg:", topic, payload)
+
+    if topic.startswith("der/control/"):
+        device_id = topic.split("/")[2]
+        try:
+            data = json.loads(payload)
+            setpoint = data.get("p_setpoint_kw")
+            if isinstance(setpoint, (int, float)):
+                SETPOINTS[device_id] = float(setpoint)
+        except json.JSONDecodeError:
+            print("[sim] failed to parse control payload", payload)
+
+
+def compute_ev_power(device_id: str, p_max: float):
+    setpoint = SETPOINTS.get(device_id)
+    if setpoint is None:
+        # fall back to old random behavior if no commands yet
+        return random.uniform(0.0, p_max)
+
+    setpoint = max(0.0, min(p_max, float(setpoint)))
+    current = LAST_P_ACTUAL.get(device_id, setpoint)
+    ramp = 1.0  # kW per step
+
+    if current < setpoint:
+        p_actual = min(current + ramp, setpoint)
+    elif current > setpoint:
+        p_actual = max(current - ramp, setpoint)
+    else:
+        p_actual = current
+
+    # add a touch of noise
+    p_actual += random.uniform(-0.2, 0.2)
+    p_actual = max(0.0, min(p_actual, p_max))
+
+    LAST_P_ACTUAL[device_id] = p_actual
+    return p_actual
 
 
 def main():
@@ -67,8 +107,7 @@ def main():
                     soc = min(max(soc + delta_soc, 0.1), 0.9)
                     STATE["bat-001"]["soc"] = soc
                 elif dtype == "ev":
-                    # pretend EV is charging gently up to p_max
-                    p_actual = random.uniform(0.0, p_max)
+                    p_actual = compute_ev_power(device_id, p_max)
                     soc = None
                 else:
                     p_actual = 0.0
@@ -79,7 +118,7 @@ def main():
                     "type": dtype,
                     "timestamp": now,
                     "p_actual_kw": p_actual,
-                    "p_setpoint_kw": None,
+                    "p_setpoint_kw": SETPOINTS.get(device_id),
                     "soc": soc,
                     "site_id": site_id,
                     "p_max_kw": p_max,
