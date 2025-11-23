@@ -1,17 +1,29 @@
 import express from 'express';
 import cors from 'cors';
-import config from './config.js';
-import { initSchema } from './db.js';
-import { startMqttClient } from './mqttClient.js';
-import { startControlLoop } from './controllers/controlLoop.js';
-import feederRouter from './routes/feeder.js';
-import devicesRouter from './routes/devices.js';
-import eventsRouter from './routes/events.js';
+import config from './config';
+import { initSchema } from './db';
+import { startMqttClient } from './mqttClient';
+import { startControlLoop } from './controllers/controlLoop';
+import feederRouter from './routes/feeder';
+import devicesRouter from './routes/devices';
+import eventsRouter from './routes/events';
 
 async function startServer() {
   try {
+    console.log('[startup] initSchema starting');
     await initSchema();
-    await startMqttClient();
+    console.log('[startup] initSchema done');
+
+    try {
+      console.log('[startup] starting MQTT client');
+      await startMqttClient();
+      console.log('[startup] MQTT client started (non-blocking)');
+    } catch (err) {
+      console.error(
+        '[startup] MQTT connect failed, continuing without broker',
+        err
+      );
+    }
 
     const app = express();
     app.use(cors());
@@ -26,7 +38,9 @@ async function startServer() {
     app.use('/api/events', eventsRouter);
 
     app.listen(config.port, () => {
-      console.log(`DERMS feeder controller listening on port ${config.port}`);
+      console.log(
+        `DERMS feeder controller listening on http://localhost:${config.port}`
+      );
     });
 
     startControlLoop();

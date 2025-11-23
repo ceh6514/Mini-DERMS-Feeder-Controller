@@ -1,6 +1,7 @@
 import { Router } from 'express';
-import { getCurrentFeederLimit } from '../repositories/eventsRepo.js';
-import { getLatestTelemetryPerDevice } from '../repositories/telemetryRepo.js';
+import { getCurrentFeederLimit } from '../repositories/eventsRepo';
+import { getLatestTelemetryPerDevice } from '../repositories/telemetryRepo';
+
 
 const router = Router();
 

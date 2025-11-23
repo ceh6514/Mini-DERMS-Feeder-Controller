@@ -1,94 +1,113 @@
-import mqtt from 'mqtt';
-import config from './config.js';
-import { upsertDevice } from './repositories/devicesRepo.js';
-import { insertTelemetry } from './repositories/telemetryRepo.js';
+import mqtt, { MqttClient } from 'mqtt';
+import config from './config';
+import { upsertDevice } from './repositories/devicesRepo';
+import { insertTelemetry } from './repositories/telemetryRepo';
 
-export const mqttClient = mqtt.connect({
-  host: config.mqtt.host,
-  port: config.mqtt.port,
-  protocol: 'mqtt',
-});
+export let mqttClient: MqttClient;
 
-function parseMessage(topic: string, payload: Buffer) {
+/**
+ * Parse a telemetry message and write it into the DB.
+ */
+function parseAndStoreMessage(topic: string, payload: Buffer) {
   const topicParts = topic.split('/');
   const deviceId = topicParts[2] ?? '';
 
   try {
-    const parsed = JSON.parse(payload.toString());
-    return { deviceId, data: parsed as Record<string, unknown> };
+    const raw = JSON.parse(payload.toString('utf-8')) as {
+      deviceId?: string;
+      type?: string;
+      timestamp?: string;
+      p_actual_kw?: number;
+      p_setpoint_kw?: number | null;
+      soc?: number | null;
+      site_id?: string;
+      p_max_kw?: number;
+    };
+
+    const id = raw.deviceId ?? deviceId;
+    const type = raw.type ?? 'unknown';
+    const ts = raw.timestamp ? new Date(raw.timestamp) : new Date();
+    const pActual = Number(raw.p_actual_kw ?? 0);
+    const pSetpoint =
+      raw.p_setpoint_kw !== undefined && raw.p_setpoint_kw !== null
+        ? Number(raw.p_setpoint_kw)
+        : null;
+    const soc =
+      raw.soc !== undefined && raw.soc !== null ? Number(raw.soc) : null;
+    const siteId = raw.site_id ?? 'default';
+    const pMaxKw = raw.p_max_kw ?? 0;
+
+    if (!id) {
+      console.warn('[mqttClient] telemetry without deviceId, topic=', topic);
+      return;
+    }
+
+    // Upsert device metadata (best-effort)
+    upsertDevice({
+      id,
+      type,
+      siteId,
+      pMaxKw,
+    }).catch((err) => {
+      console.error('[mqttClient] failed to upsert device', err);
+    });
+
+    // Insert telemetry row
+    insertTelemetry({
+      device_id: id,
+      ts,
+      type,
+      p_actual_kw: pActual,
+      p_setpoint_kw: pSetpoint,
+      soc,
+      site_id: siteId,
+    }).catch((err) => {
+      console.error('[mqttClient] failed to insert telemetry', err);
+    });
   } catch (err) {
-    console.error('[mqttClient] failed to parse JSON payload', err);
-    return null;
+    console.error('[mqttClient] failed to parse telemetry', err);
   }
 }
 
+/**
+ * Initialize the MQTT client, set up subscriptions and handlers.
+ *
+ * NOTE: This function returns immediately; it does NOT wait for the
+ * broker connection. We don't want startup to block forever if MQTT
+ * is slow or down.
+ */
 export async function startMqttClient(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    mqttClient.on('connect', () => {
-      console.log(`[mqttClient] connected to mqtt://${config.mqtt.host}:${config.mqtt.port}`);
-      mqttClient.subscribe('der/telemetry/#', (err) => {
-        if (err) {
-          reject(err);
-          return;
-        }
+  mqttClient = mqtt.connect({
+    host: config.mqtt.host,
+    port: config.mqtt.port,
+    protocol: 'mqtt',
+  });
+
+  mqttClient.on('connect', () => {
+    console.log(
+      '[mqttClient] connected to MQTT broker',
+      `${config.mqtt.host}:${config.mqtt.port}`
+    );
+
+    mqttClient.subscribe('der/telemetry/#', (err) => {
+      if (err) {
+        console.error('[mqttClient] subscribe error', err);
+      } else {
         console.log('[mqttClient] subscribed to der/telemetry/#');
-        resolve();
-      });
-    });
-
-    mqttClient.on('message', async (topic, payload) => {
-      const parsed = parseMessage(topic, payload);
-      if (!parsed) {
-        return;
       }
-
-      const { deviceId, data } = parsed;
-
-      const {
-        deviceId: payloadDeviceId,
-        type = 'ev',
-        timestamp,
-        p_actual_kw = 0,
-        p_setpoint_kw = null,
-        soc = null,
-        site_id = 'default',
-        p_max_kw = 0,
-      } = data as Record<string, any>;
-
-      const effectiveDeviceId = deviceId || payloadDeviceId;
-      if (!effectiveDeviceId) {
-        console.warn('[mqttClient] missing deviceId in topic or payload');
-        return;
-      }
-
-      // Ensure the device exists before storing telemetry
-      await upsertDevice({
-        id: effectiveDeviceId,
-        type: String(type),
-        siteId: String(site_id ?? 'default'),
-        pMaxKw: Number(p_max_kw ?? 0),
-      });
-
-      const ts = timestamp ? new Date(timestamp) : new Date();
-
-      try {
-        await insertTelemetry({
-          device_id: effectiveDeviceId,
-          ts,
-          type: String(type),
-          p_actual_kw: Number(p_actual_kw ?? 0),
-          p_setpoint_kw: p_setpoint_kw !== undefined ? Number(p_setpoint_kw) : null,
-          soc: soc !== undefined ? Number(soc) : null,
-          site_id: String(site_id ?? 'default'),
-        });
-      } catch (err) {
-        console.error('[mqttClient] failed to insert telemetry', err);
-      }
-    });
-
-    mqttClient.on('error', (err) => {
-      console.error('[mqttClient] connection error', err);
-      reject(err);
     });
   });
+
+  mqttClient.on('message', (topic, payload) => {
+    // Handle telemetry messages
+    if (topic.startsWith('der/telemetry/')) {
+      parseAndStoreMessage(topic, payload);
+    }
+  });
+
+  mqttClient.on('error', (err) => {
+    console.error('[mqttClient] connection error', err);
+  });
+
+  // We don't await anything here; startup should not block on MQTT
 }

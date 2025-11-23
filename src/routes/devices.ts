@@ -1,6 +1,7 @@
 import { Router } from 'express';
-import { getAllDevices } from '../repositories/devicesRepo.js';
-import { getLatestTelemetryPerDevice, getRecentTelemetry } from '../repositories/telemetryRepo.js';
+import { getAllDevices } from '../repositories/devicesRepo';
+import { getLatestTelemetryPerDevice, getRecentTelemetry } from '../repositories/telemetryRepo';
+
 
 const router = Router();
 

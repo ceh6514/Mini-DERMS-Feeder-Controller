@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { createEvent } from '../repositories/eventsRepo.js';
+import { createEvent } from '../repositories/eventsRepo';
+
 
 const router = Router();
 

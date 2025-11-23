@@ -1,5 +1,5 @@
-import config from '../config.js';
-import { query } from '../db.js';
+import config from '../config';
+import { query } from '../db';
 
 export interface EventRow {
   id: number;

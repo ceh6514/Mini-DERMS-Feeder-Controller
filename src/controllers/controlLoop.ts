@@ -1,7 +1,8 @@
-import config from '../config.js';
-import { getCurrentFeederLimit } from '../repositories/eventsRepo.js';
-import { getLatestTelemetryPerDevice, TelemetryRow } from '../repositories/telemetryRepo.js';
-import { mqttClient } from '../mqttClient.js';
+import config from '../config';
+import { getCurrentFeederLimit } from '../repositories/eventsRepo';
+import { getLatestTelemetryPerDevice, TelemetryRow } from '../repositories/telemetryRepo';
+import { mqttClient } from '../mqttClient';
+
 
 function computeNewSetpoint(
   device: TelemetryRow,
