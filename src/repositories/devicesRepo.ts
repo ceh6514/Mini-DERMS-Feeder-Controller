@@ -16,7 +16,7 @@ export async function upsertDevice(device: Device): Promise<void> {
       type = EXCLUDED.type,
       site_id = EXCLUDED.site_id,
       p_max_kw = EXCLUDED.p_max_kw,
-      priority = EXCLUDED.priority;
+      priority = COALESCE(EXCLUDED.priority, devices.priority);
   `;
   await query(text, [
     device.id,

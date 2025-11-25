@@ -19,6 +19,7 @@ router.get('/devices', async (_req, res) => {
   res.json(
     devices.map((d) => ({
       ...d,
+      priority: d.priority ?? null,
       latestTelemetry: latestByDevice[d.id] ?? null,
     })),
   );

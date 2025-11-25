@@ -76,16 +76,16 @@ export function computeAllowedShares(
 ): Map<string, number> {
   const allowed = new Map<string, number>();
   const totalWeight = evDevices.reduce((sum, ev) => {
-    const capacityWeight = ev.pMax > 0 ? ev.pMax : 1;
-    const priorityWeight = Math.max(ev.priority, 1);
-    return sum + capacityWeight * priorityWeight;
+    const baseCapacity = ev.pMax > 0 ? ev.pMax : 1;
+    const priorityFactor = Math.max(ev.priority, 1);
+    return sum + baseCapacity * priorityFactor;
   }, 0);
   if (totalWeight <= 0) return allowed;
 
   for (const ev of evDevices) {
-    const capacityWeight = ev.pMax > 0 ? ev.pMax : 1;
-    const priorityWeight = Math.max(ev.priority, 1);
-    const weight = capacityWeight * priorityWeight;
+    const baseCapacity = ev.pMax > 0 ? ev.pMax : 1;
+    const priorityFactor = Math.max(ev.priority, 1);
+    const weight = baseCapacity * priorityFactor;
     const share = (availableForEv * weight) / totalWeight;
     allowed.set(ev.device.id, Math.min(Math.max(0, share), ev.pMax));
   }
@@ -131,6 +131,9 @@ export function startControlLoop() {
       const latest = await getLatestTelemetryPerDevice();
       const devices = await getAllDevices();
       const deviceLookup = buildDeviceLookup(devices);
+      const priorityLookup = new Map(
+        devices.map((device) => [device.id, device.priority ?? 1])
+      );
 
       if (latest.length === 0) {
         console.log('[controlLoop] no telemetry yet, skipping tick');
@@ -142,15 +145,6 @@ export function startControlLoop() {
       const totalEvKw = evDevices.reduce((sum, ev) => sum + ev.pActual, 0);
       const nonEvKw = totalKw - totalEvKw;
       const availableForEv = Math.max(limitKw - nonEvKw, 0);
-
-      console.log(
-        '[controlLoop] total',
-        totalKw.toFixed(2),
-        'limit',
-        limitKw.toFixed(2),
-        'nonEv',
-        nonEvKw.toFixed(2)
-      );
 
       if (evDevices.length === 0) {
         console.log('[controlLoop] no EV devices found, skipping control');
@@ -195,13 +189,20 @@ export function startControlLoop() {
       }
 
       if (commands.length > 0) {
+        const commandSummaries = commands.map((c) => ({
+          id: c.deviceId,
+          setpoint: c.newSetpoint.toFixed(2),
+          priority: priorityLookup.get(c.deviceId) ?? 1,
+        }));
         console.log(
-          '[controlLoop] ev commands',
-          commands.map((c) => ({
-            id: c.deviceId,
-            setpoint: c.newSetpoint.toFixed(2),
-            priority: evDevices.find((ev) => ev.device.id === c.deviceId)?.priority,
-          }))
+          '[controlLoop] total',
+          totalKw.toFixed(2),
+          'limit',
+          limitKw.toFixed(2),
+          'nonEv',
+          nonEvKw.toFixed(2),
+          'ev commands',
+          commandSummaries
         );
         publishCommands(
           commands,
