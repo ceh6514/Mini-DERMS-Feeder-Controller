@@ -42,7 +42,7 @@ function parseAndStoreMessage(topic: string, payload: Buffer) {
       return;
     }
 
-    // Upsert device metadata (best-effort)
+    //Upsert device metadata (best-effort)
     upsertDevice({
       id,
       type,
@@ -52,7 +52,7 @@ function parseAndStoreMessage(topic: string, payload: Buffer) {
       console.error('[mqttClient] failed to upsert device', err);
     });
 
-    // Insert telemetry row
+    //Insert telemetry row
     insertTelemetry({
       device_id: id,
       ts,
@@ -99,7 +99,7 @@ export async function startMqttClient(): Promise<void> {
   });
 
   mqttClient.on('message', (topic, payload) => {
-    // Handle telemetry messages
+    //Handle telemetry messages
     if (topic.startsWith('der/telemetry/')) {
       parseAndStoreMessage(topic, payload);
     }
@@ -109,5 +109,5 @@ export async function startMqttClient(): Promise<void> {
     console.error('[mqttClient] connection error', err);
   });
 
-  // We don't await anything here; startup should not block on MQTT
+  //We don't await anything here; startup should not block on MQTT
 }
