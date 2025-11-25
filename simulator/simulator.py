@@ -8,22 +8,29 @@ import paho.mqtt.client as mqtt
 BROKER_HOST = "localhost"
 BROKER_PORT = 1883
 
-# Simple set of devices
+# Simple set of devices (one PV, one battery, and multiple EVs)
 DEVICES = [
     {"id": "pv-001", "type": "pv", "site_id": "house-01", "p_max_kw": 5.0},
     {"id": "bat-001", "type": "battery", "site_id": "house-01", "p_max_kw": 4.0},
     {"id": "ev-001", "type": "ev", "site_id": "house-01", "p_max_kw": 7.2},
+    {"id": "ev-002", "type": "ev", "site_id": "house-01", "p_max_kw": 11.0},
+    {"id": "ev-003", "type": "ev", "site_id": "house-02", "p_max_kw": 3.6},
+    {"id": "ev-004", "type": "ev", "site_id": "house-02", "p_max_kw": 6.6},
 ]
 
 # simple state for battery SOC and EV energy delivered
 STATE = {
     "bat-001": {"soc": 0.5},
+    # track nominal session progress per EV for future extensions
     "ev-001": {"energy_kwh": 0.0},
+    "ev-002": {"energy_kwh": 0.0},
+    "ev-003": {"energy_kwh": 0.0},
+    "ev-004": {"energy_kwh": 0.0},
 }
 
 # Track commanded setpoints and last measured power to smooth EV ramping
-SETPOINTS = {}
-LAST_P_ACTUAL = {}
+SETPOINTS: dict[str, float] = {}
+LAST_P_ACTUAL: dict[str, float] = {}
 
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
@@ -35,8 +42,6 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 def on_message(client, userdata, msg):
     topic = msg.topic
     payload = msg.payload.decode()
-    print("[sim] control msg:", topic, payload)
-
     if topic.startswith("der/control/"):
         device_id = topic.split("/")[2]
         try:
@@ -44,6 +49,7 @@ def on_message(client, userdata, msg):
             setpoint = data.get("p_setpoint_kw")
             if isinstance(setpoint, (int, float)):
                 SETPOINTS[device_id] = float(setpoint)
+                print(f"[sim] control msg {device_id} setpoint -> {SETPOINTS[device_id]:.2f} kW")
         except json.JSONDecodeError:
             print("[sim] failed to parse control payload", payload)
 
@@ -52,7 +58,9 @@ def compute_ev_power(device_id: str, p_max: float):
     setpoint = SETPOINTS.get(device_id)
     if setpoint is None:
         # fall back to old random behavior if no commands yet
-        return random.uniform(0.0, p_max)
+        p_actual = random.uniform(0.0, p_max)
+        LAST_P_ACTUAL[device_id] = p_actual
+        return p_actual
 
     setpoint = max(0.0, min(p_max, float(setpoint)))
     current = LAST_P_ACTUAL.get(device_id, setpoint)

@@ -64,98 +64,42 @@ function prepareEvDevices(
     });
 }
 
-function applyCurtailment(
+function computeAllowedShares(
   evDevices: DeviceWithTelemetry[],
-  overload: number,
-  stepKw: number
+  availableForEv: number
 ): Map<string, number> {
-  const newSetpoints = new Map<string, number>();
-  let remaining = overload;
+  const allowed = new Map<string, number>();
+  const totalWeight = evDevices.reduce((sum, ev) => sum + (ev.pMax > 0 ? ev.pMax : 1), 0);
+  if (totalWeight <= 0) return allowed;
 
-  // Work on a copy of the state so we can iterate multiple passes
-  const working = evDevices
-    .map((ev) => ({ ...ev }))
-    .sort((a, b) => b.pActual - a.pActual);
-
-  while (remaining > 0.0001) {
-    let changedThisPass = false;
-
-    for (const ev of working) {
-      if (remaining <= 0.0001) break;
-
-      if (ev.currentSetpoint <= 0) {
-        newSetpoints.set(ev.device.id, 0);
-        continue;
-      }
-
-      const reduction = Math.min(stepKw, remaining, ev.currentSetpoint);
-      const updatedSetpoint = Math.max(0, ev.currentSetpoint - reduction);
-      if (updatedSetpoint !== ev.currentSetpoint) {
-        changedThisPass = true;
-      }
-
-      ev.currentSetpoint = updatedSetpoint;
-      remaining -= reduction;
-      newSetpoints.set(ev.device.id, updatedSetpoint);
-    }
-
-    // Nothing more to reduce
-    if (!changedThisPass) {
-      break;
-    }
+  for (const ev of evDevices) {
+    const weight = ev.pMax > 0 ? ev.pMax : 1;
+    const share = (availableForEv * weight) / totalWeight;
+    allowed.set(ev.device.id, Math.min(Math.max(0, share), ev.pMax));
   }
 
-  return newSetpoints;
+  return allowed;
 }
 
-function applyRelaxation(
-  evDevices: DeviceWithTelemetry[],
-  headroom: number,
-  stepKw: number
-): Map<string, number> {
-  const newSetpoints = new Map<string, number>();
-  let remaining = headroom;
+function publishCommands(
+  commands: { deviceId: string; newSetpoint: number; prevSetpoint: number }[],
+  logContext: string
+) {
+  if (commands.length === 0) return;
 
-  // Iterate EVs in the order provided to spread increases somewhat evenly
-  const working = evDevices.map((ev) => ({ ...ev }));
-
-  while (remaining > 0.0001) {
-    let changedThisPass = false;
-
-    for (const ev of working) {
-      if (remaining <= 0.0001) break;
-
-      const available = Math.max(0, ev.pMax - ev.currentSetpoint);
-      if (available <= 0) {
-        newSetpoints.set(ev.device.id, ev.currentSetpoint);
-        continue;
-      }
-
-      const increase = Math.min(stepKw, remaining, available);
-      const updatedSetpoint = Math.min(ev.pMax, ev.currentSetpoint + increase);
-      if (updatedSetpoint !== ev.currentSetpoint) {
-        changedThisPass = true;
-      }
-
-      ev.currentSetpoint = updatedSetpoint;
-      remaining -= increase;
-      newSetpoints.set(ev.device.id, updatedSetpoint);
-    }
-
-    if (!changedThisPass) {
-      break;
-    }
+  if (!mqttClient || !mqttClient.connected) {
+    console.warn(
+      `[controlLoop] MQTT not connected, skipping publish this tick (${logContext})`
+    );
+    return;
   }
 
-  return newSetpoints;
-}
-
-function publishCommands(commands: { deviceId: string; newSetpoint: number; prevSetpoint: number }[]) {
   for (const cmd of commands) {
     try {
       const topic = `der/control/${cmd.deviceId}`;
       const payload = JSON.stringify({ p_setpoint_kw: cmd.newSetpoint });
       mqttClient.publish(topic, payload);
+      deviceSetpoints.set(cmd.deviceId, cmd.newSetpoint);
     } catch (err) {
       console.error('[controlLoop] failed to publish command', err);
     }
@@ -183,36 +127,55 @@ export function startControlLoop() {
 
       const totalKw = latest.reduce((sum, row) => sum + (row.p_actual_kw || 0), 0);
       const evDevices = prepareEvDevices(latest, deviceLookup);
+      const totalEvKw = evDevices.reduce((sum, ev) => sum + ev.pActual, 0);
+      const nonEvKw = totalKw - totalEvKw;
+      const availableForEv = Math.max(limitKw - nonEvKw, 0);
 
-      console.log('[controlLoop] total', totalKw.toFixed(2), 'limit', limitKw.toFixed(2));
+      console.log(
+        '[controlLoop] total',
+        totalKw.toFixed(2),
+        'limit',
+        limitKw.toFixed(2),
+        'nonEv',
+        nonEvKw.toFixed(2)
+      );
 
       if (evDevices.length === 0) {
         console.log('[controlLoop] no EV devices found, skipping control');
         return;
       }
 
-      let proposed = new Map<string, number>();
-
-      if (totalKw > limitKw + marginKw) {
-        const overload = totalKw - limitKw;
-        proposed = applyCurtailment(evDevices, overload, stepKw);
-      } else if (totalKw < limitKw - marginKw) {
-        const headroom = limitKw - totalKw;
-        proposed = applyRelaxation(evDevices, headroom, stepKw);
-      } else {
+      const overloaded = availableForEv < totalEvKw - marginKw;
+      const hasHeadroom = availableForEv > totalEvKw + marginKw;
+      if (!overloaded && !hasHeadroom) {
         console.log('[controlLoop] within margin, no changes');
         return;
       }
 
+      const allowedShares = computeAllowedShares(evDevices, availableForEv);
       const commands: { deviceId: string; newSetpoint: number; prevSetpoint: number }[] = [];
 
       for (const ev of evDevices) {
         const previous = deviceSetpoints.get(ev.device.id) ?? ev.currentSetpoint;
-        const newSetpoint = proposed.get(ev.device.id);
+        let target = previous;
 
-        if (newSetpoint === undefined) continue;
+        if (overloaded) {
+          target = allowedShares.get(ev.device.id) ?? 0;
+        } else if (hasHeadroom) {
+          target = Math.min(ev.pMax, previous + stepKw);
+        }
 
-        deviceSetpoints.set(ev.device.id, newSetpoint);
+        target = Math.min(Math.max(0, target), ev.pMax);
+
+        const delta = target - previous;
+        let newSetpoint = previous;
+        if (Math.abs(delta) > stepKw) {
+          newSetpoint = previous + Math.sign(delta) * stepKw;
+        } else {
+          newSetpoint = target;
+        }
+
+        newSetpoint = Math.min(Math.max(0, newSetpoint), ev.pMax);
 
         if (Math.abs(newSetpoint - previous) > epsilon) {
           commands.push({ deviceId: ev.device.id, newSetpoint, prevSetpoint: previous });
@@ -221,10 +184,13 @@ export function startControlLoop() {
 
       if (commands.length > 0) {
         console.log(
-          '[controlLoop] commands',
+          '[controlLoop] ev commands',
           commands.map((c) => ({ id: c.deviceId, setpoint: c.newSetpoint.toFixed(2) }))
         );
-        publishCommands(commands);
+        publishCommands(
+          commands,
+          `total=${totalKw.toFixed(2)} limit=${limitKw.toFixed(2)} availableForEv=${availableForEv.toFixed(2)}`
+        );
       } else {
         console.log('[controlLoop] no setpoint changes beyond epsilon');
       }
