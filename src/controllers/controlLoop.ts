@@ -7,10 +7,10 @@ import {
 import { getAllDevices, Device } from '../repositories/devicesRepo';
 import { mqttClient } from '../mqttClient';
 
-// Track the most recent setpoint we have commanded for each device.
-const deviceSetpoints = new Map<string, number>();
+//Track the most recent setpoint we have commanded for each device.
+export const deviceSetpoints = new Map<string, number>();
 
-interface DeviceWithTelemetry {
+export interface DeviceWithTelemetry {
   device: Device;
   telemetry: TelemetryRow;
   currentSetpoint: number;
@@ -18,7 +18,7 @@ interface DeviceWithTelemetry {
   pMax: number;
 }
 
-function buildDeviceLookup(devices: Device[]): Map<string, Device> {
+export function buildDeviceLookup(devices: Device[]): Map<string, Device> {
   const lookup = new Map<string, Device>();
   for (const device of devices) {
     lookup.set(device.id, device);
@@ -26,7 +26,10 @@ function buildDeviceLookup(devices: Device[]): Map<string, Device> {
   return lookup;
 }
 
-function getCurrentSetpoint(deviceId: string, telemetry: TelemetryRow): number {
+export function getCurrentSetpoint(
+  deviceId: string,
+  telemetry: TelemetryRow
+): number {
   const existing = deviceSetpoints.get(deviceId);
   if (existing !== undefined) return existing;
 
@@ -37,7 +40,7 @@ function getCurrentSetpoint(deviceId: string, telemetry: TelemetryRow): number {
   return telemetry.p_actual_kw ?? 0;
 }
 
-function prepareEvDevices(
+export function prepareEvDevices(
   latest: TelemetryRow[],
   devices: Map<string, Device>
 ): DeviceWithTelemetry[] {
@@ -64,7 +67,7 @@ function prepareEvDevices(
     });
 }
 
-function computeAllowedShares(
+export function computeAllowedShares(
   evDevices: DeviceWithTelemetry[],
   availableForEv: number
 ): Map<string, number> {
