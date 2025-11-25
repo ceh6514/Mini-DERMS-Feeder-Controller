@@ -15,8 +15,14 @@ export async function initSchema(): Promise<void> {
       id TEXT PRIMARY KEY,
       type TEXT NOT NULL,
       site_id TEXT NOT NULL,
-      p_max_kw REAL NOT NULL
+      p_max_kw REAL NOT NULL,
+      priority INTEGER
     );
+  `);
+
+  await pool.query(`
+    ALTER TABLE devices
+    ADD COLUMN IF NOT EXISTS priority INTEGER;
   `);
 
   await pool.query(`

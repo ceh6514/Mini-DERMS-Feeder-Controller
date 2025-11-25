@@ -12,10 +12,10 @@ BROKER_PORT = 1883
 DEVICES = [
     {"id": "pv-001", "type": "pv", "site_id": "house-01", "p_max_kw": 5.0},
     {"id": "bat-001", "type": "battery", "site_id": "house-01", "p_max_kw": 4.0},
-    {"id": "ev-001", "type": "ev", "site_id": "house-01", "p_max_kw": 7.2},
-    {"id": "ev-002", "type": "ev", "site_id": "house-01", "p_max_kw": 11.0},
-    {"id": "ev-003", "type": "ev", "site_id": "house-02", "p_max_kw": 3.6},
-    {"id": "ev-004", "type": "ev", "site_id": "house-02", "p_max_kw": 6.6},
+    {"id": "ev-001", "type": "ev", "site_id": "house-01", "p_max_kw": 7.2, "priority": 3},
+    {"id": "ev-002", "type": "ev", "site_id": "house-01", "p_max_kw": 11.0, "priority": 2},
+    {"id": "ev-003", "type": "ev", "site_id": "house-02", "p_max_kw": 3.6, "priority": 1},
+    {"id": "ev-004", "type": "ev", "site_id": "house-02", "p_max_kw": 6.6, "priority": 2},
 ]
 
 # simple state for battery SOC and EV energy delivered
@@ -130,6 +130,7 @@ def main():
                     "soc": soc,
                     "site_id": site_id,
                     "p_max_kw": p_max,
+                    "priority": d.get("priority"),
                 }
 
                 topic = f"der/telemetry/{device_id}"
