@@ -1,0 +1,648 @@
+Mini-DERMS Feeder Controller – Design Document
+1. Purpose and Scope
+
+Mini-DERMS Feeder Controller is a small, end-to-end demo of a feeder-level DERMS system:
+
+It simulates distributed energy resources (DERs): PV, batteries, and EV chargers.
+
+It ingests telemetry via MQTT, persists it in PostgreSQL, and exposes a REST API.
+
+It runs a periodic control loop that enforces a configurable feeder limit, including demand-response (DR) events that override the default limit.
+
+It ships with a React dashboard that visualizes current feeder load, device status, and lets an operator create DR events through a small web form.
+
+This is a single-feeder demo intended for learning and portfolio use, not production deployment.
+
+Non-goals:
+
+No multi-feeder topology or full network model.
+
+No complex optimization (LP/MIP); control is heuristic and proportional.
+
+No authentication / multi-tenant security model.
+
+2. High-Level Architecture
+
+Technologies
+
+Simulator: Python (paho-mqtt) publishing telemetry and obeying control commands.
+
+Message bus: MQTT (Mosquitto) at localhost:1883.
+
+Backend: Node.js + TypeScript + Express + pg (PostgreSQL client) + mqtt.
+
+Database: PostgreSQL with three main tables (devices, telemetry, events).
+
+Frontend: React + TypeScript + Vite.
+
+Data & Control Flow
+
+Simulator → MQTT
+
+PV, battery, and multiple EV chargers periodically publish telemetry to:
+
+der/telemetry/<deviceId> (JSON payload).
+
+MQTT → Backend → Postgres
+
+Backend’s MQTT client subscribes to der/telemetry/#.
+
+For each message:
+
+Parse JSON.
+
+Best-effort upsert device metadata into devices.
+
+Insert a row into telemetry (time-series).
+
+DB → Control Loop → MQTT
+
+Periodic control loop:
+
+Queries latest telemetry per device.
+
+Computes total feeder kW vs current limit.
+
+Allocates allowed kW across EV chargers proportionally.
+
+Publishes setpoints on der/control/<deviceId> as JSON.
+
+MQTT → Simulator
+
+Simulator subscribes to der/control/#.
+
+For EVs, it ramps p_actual_kw toward the commanded p_setpoint_kw with a simple dynamic model and noise.
+
+Backend → Frontend
+
+React dashboard polls:
+
+GET /api/feeder/summary
+
+GET /api/devices
+
+A small form calls:
+
+POST /api/events to create DR events.
+
+3. Backend Architecture
+3.1 Startup & Wiring (src/index.ts)
+
+Responsibilities:
+
+Load configuration (config.ts).
+
+Initialize database schema (initSchema from db.ts).
+
+Start MQTT client (startMqttClient), non-blocking.
+
+Configure and start Express:
+
+Middleware: CORS, JSON body parsing.
+
+Routes:
+
+GET /api/health
+
+GET /api/feeder/summary
+
+GET /api/devices
+
+GET /api/telemetry/:deviceId (recent history)
+
+GET /api/events (if exposed)
+
+POST /api/events
+
+Start the control loop (startControlLoop) after DB and MQTT are ready.
+
+Listen on config.port (e.g., http://localhost:3001).
+
+This file is intentionally thin; all logic is delegated to modules.
+
+3.2 Configuration (src/config.ts)
+
+Loads environment variables via dotenv and provides typed defaults:
+
+HTTP server:
+
+PORT (default 3001).
+
+Postgres:
+
+DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME.
+
+MQTT:
+
+MQTT_HOST, MQTT_PORT.
+
+Control behavior:
+
+CONTROL_INTERVAL_SECONDS (e.g., 60s).
+
+FEEDER_DEFAULT_LIMIT_KW (e.g., 250 kW).
+
+Exposes a config object used everywhere else; the app can run with just .env as documented in the README.
+
+3.3 Persistence Layer (src/db.ts)
+
+Builds a pg.Pool using configuration.
+
+On startup, executes DDL to create tables if absent:
+
+devices
+
+id (PK, text, e.g., ev-001)
+
+type (pv, battery, ev, …)
+
+site_id (text)
+
+p_max_kw (numeric)
+
+additional metadata fields as needed.
+
+telemetry
+
+id (PK, serial)
+
+device_id (FK → devices.id)
+
+ts (timestamp with time zone)
+
+type
+
+p_actual_kw (numeric)
+
+p_setpoint_kw (numeric, nullable)
+
+soc (numeric, nullable)
+
+site_id
+
+device_p_max_kw (snapshot of p_max_kw)
+
+events
+
+id (PK, serial)
+
+ts_start (timestamptz)
+
+ts_end (timestamptz)
+
+limit_kw (numeric)
+
+type (e.g., 'dr')
+
+Exposes a small query(sql, params) helper used by repository modules.
+
+Enforces referential integrity via foreign keys (telemetry rows must reference an existing device).
+
+3.4 Repository Layer
+
+Repositories hide raw SQL and provide logical operations.
+
+src/repositories/devicesRepo.ts
+
+upsertDevice(deviceId, type, siteId, pMaxKw)
+Insert or update devices when new telemetry arrives.
+
+getAllDevices()
+Returns all device rows (used by /api/devices and control loop).
+
+src/repositories/telemetryRepo.ts
+
+insertTelemetry(row: TelemetryRowInput)
+Writes a new telemetry record.
+
+getLatestTelemetryPerDevice()
+Latest row per device_id, used for:
+
+feeder summary,
+
+device list,
+
+control loop.
+
+getRecentTelemetry(deviceId, limit)
+Recent time-series for charting or debugging.
+
+src/repositories/eventsRepo.ts
+
+createEvent({ tsStart, tsEnd, limitKw, type })
+Inserts a new DR event with basic validation (tsStart < tsEnd, limit ≥ 0).
+
+getActiveEvents(now: Date)
+Returns all events where ts_start <= now <= ts_end.
+
+getCurrentFeederLimit(now: Date)
+
+If one or more active events exist:
+
+Returns the minimum limit_kw (most restrictive).
+
+Else:
+
+Returns config.feederDefaultLimitKw.
+
+3.5 MQTT Ingestion (src/mqttClient.ts)
+
+Creates a single shared mqttClient instance:
+
+Connects to mqtt://MQTT_HOST:MQTT_PORT.
+
+On connect:
+
+Subscribes to der/telemetry/#.
+
+On message for der/telemetry/<deviceId>:
+
+Parse JSON payload, expecting fields like:
+
+deviceId, type, timestamp, p_actual_kw, soc, site_id, p_max_kw, p_setpoint_kw.
+
+Call upsertDevice(deviceId, type, site_id, p_max_kw) (best effort; errors logged but do not crash).
+
+Call insertTelemetry(...) to persist the time-series point.
+
+Log and continue if insert fails (e.g., if device row isn’t present yet).
+
+Connection is non-blocking:
+
+The HTTP server and control loop can start even if the broker is temporarily unavailable.
+
+Errors are logged but do not bring down the process.
+
+3.6 Control Loop (src/controllers/controlLoop.ts)
+
+Runs periodically to enforce feeder limits by adjusting EV setpoints.
+
+Inputs per tick
+
+now = new Date()
+
+limitKw = getCurrentFeederLimit(now)
+
+latest = getLatestTelemetryPerDevice()
+
+devices = getAllDevices()
+
+Derived values
+
+Join devices + latest on id to get, for each device:
+
+deviceId
+
+type
+
+pActualKw (from latest telemetry)
+
+pMaxKw (from devices table)
+
+Partition into:
+
+evDevices: type "ev".
+
+nonEvDevices: all others (pv, battery, etc.).
+
+Compute:
+
+totalKw = sum(pActualKw for all devices)
+
+totalEvKw = sum(pActualKw for evDevices)
+
+nonEvKw = totalKw - totalEvKw
+
+availableForEv = max(limitKw - nonEvKw, 0)
+
+Fairness heuristic
+
+Only EVs are controllable; PV and battery remain as they are.
+
+Let weights[i] for each EV be (for example) its pMaxKw.
+
+If there is overload (totalKw > limitKw + margin):
+
+Distribute availableForEv across EVs proportionally:
+
+allowedEvKw[i] = availableForEv * weights[i] / sum(weights)
+
+
+Clamp each allowedEvKw[i] to [0, pMaxKw[i]].
+
+Move current EV setpoints toward these allowed values (not necessarily in one jump, to avoid oscillations).
+
+If there is headroom (totalKw < limitKw - margin):
+
+Allow EV setpoints to gently ramp back up toward pMaxKw, again respecting the feeder limit.
+
+State and publishing
+
+Maintain deviceSetpoints: Map<string, number> to remember last commanded setpoint per EV.
+
+For each EV:
+
+prevSetpoint = deviceSetpoints.get(id) ?? pActualKw
+
+newSetpoint = f(prevSetpoint, allowedEvKw) (according to heuristic).
+
+If |newSetpoint - prevSetpoint| > epsilon:
+
+Publish to MQTT:
+
+const topic = `der/control/${deviceId}`;
+const payload = JSON.stringify({ p_setpoint_kw: newSetpoint });
+mqttClient.publish(topic, payload);
+
+
+Update deviceSetpoints.
+
+Log each tick:
+
+[controlLoop] total <x> limit <y> nonEv <z>
+[controlLoop] ev commands [ { id, setpoint }, ... ]
+
+
+This loop turns DR events and feeder limits into concrete kW setpoints for each EV charger.
+
+3.7 HTTP API Surface
+
+Health
+
+GET /api/health
+→ { "status": "ok" } if the process is up and responding.
+
+Feeder
+
+GET /api/feeder/summary
+Returns:
+
+interface FeederSummary {
+  totalKw: number;
+  limitKw: number;
+  deviceCount: number;
+  byType: {
+    [type: string]: {
+      count: number;
+      totalKw: number;
+    };
+  };
+}
+
+
+Devices
+
+GET /api/devices
+Returns devices with latest telemetry:
+
+interface DeviceTelemetry {
+  id: number;
+  device_id: string;
+  ts: string;
+  type: string;
+  p_actual_kw: number;
+  p_setpoint_kw: number | null;
+  soc: number | null;
+  site_id: string;
+  device_p_max_kw: number;
+}
+
+interface DeviceWithLatest {
+  id: string;
+  type: string;
+  siteId: string;
+  pMaxKw: number;
+  latestTelemetry: DeviceTelemetry | null;
+}
+
+
+Telemetry
+
+GET /api/telemetry/:deviceId
+Returns recent history for a single device (e.g., N most recent points), used for debugging or future charts.
+
+Events
+
+POST /api/events
+Request body:
+
+{
+  "tsStart": "ISO timestamp",
+  "tsEnd": "ISO timestamp",
+  "limitKw": 3,
+  "type": "dr"
+}
+
+
+Response:
+
+{
+  "id": "1",
+  "ts_start": "...",
+  "ts_end": "...",
+  "limit_kw": 3,
+  "type": "dr"
+}
+
+
+GET /api/events (optional, if implemented)
+Returns existing events for inspection.
+
+4. Frontend (Dashboard) Design
+4.1 Structure
+
+Single-page React app built with Vite + TypeScript:
+
+src/main.tsx – bootstraps React root.
+
+src/App.tsx – wraps the Dashboard page.
+
+src/pages/Dashboard.tsx – top-level layout and polling logic.
+
+src/api/types.ts – TypeScript types for API responses.
+
+src/api/client.ts – fetch helpers (fetchFeederSummary, fetchDevices, createDrEvent).
+
+Components:
+
+FeederSummary.tsx – summary card with total kW, limit, device count, and by-type chips.
+
+FeederChart.tsx – simple horizontal bar showing totalKw / limitKw.
+
+DeviceTable.tsx – table of devices (ID, type, site, p_actual_kw, p_max_kw, SOC, last updated).
+
+DrEventForm.tsx – small card to create DR events.
+
+Styling: src/styles.css for basic card/tables/layout styling.
+
+4.2 Polling and State
+
+Dashboard:
+
+Maintains local state:
+
+summary: FeederSummary | null
+
+devices: DeviceWithLatest[]
+
+loading / error flags.
+
+On mount:
+
+Immediately fetches summary + devices.
+
+Sets up a polling interval (~8 seconds) to refresh both.
+
+On unmount:
+
+Clears the polling interval.
+
+The polling interval ensures the UI stays in sync with the latest telemetry and control decisions.
+
+4.3 DR Event Form
+
+DrEventForm:
+
+Inputs:
+
+limitKw (number input).
+
+durationMinutes (number input).
+
+On submit:
+
+Validate both > 0.
+
+Compute:
+
+const now = new Date();
+const tsStart = now.toISOString();
+const tsEnd = new Date(now.getTime() + durationMinutes * 60 * 1000).toISOString();
+
+
+Call createDrEvent({ limitKw, durationMinutes }) which POSTs /api/events.
+
+Show a success or error message inline.
+
+Optionally trigger a one-off refetch of summary/devices in the parent.
+
+This replaces manual curl calls and makes the DR event behavior more visible and testable.
+
+5. Simulator Design
+
+simulator/simulator.py:
+
+Uses paho.mqtt.client to connect to localhost:1883.
+
+Device set
+
+pv-001 (type "pv", site house-01, p_max_kw ~ 5)
+
+bat-001 (type "battery", site house-01, p_max_kw ~ 4)
+
+ev-001..ev-004 (type "ev", mixed p_max_kw values and sites).
+
+State tracking
+
+Per-battery SOC map (0–1).
+
+Per-EV:
+
+SETPOINTS[deviceId] – last commanded p_setpoint_kw.
+
+LAST_P_ACTUAL[deviceId] – previous step’s p_actual_kw.
+
+MQTT handlers
+
+on_connect:
+
+Logs connection.
+
+Subscribes to der/control/#.
+
+on_message:
+
+For topics der/control/<deviceId>:
+
+Parse JSON.
+
+If p_setpoint_kw present and numeric:
+
+Store in SETPOINTS[deviceId].
+
+Log [sim] control msg ev-002 setpoint -> 3.5 kW.
+
+Main loop
+
+Every few seconds:
+
+For PV:
+
+p_actual_kw generated as noisy value ∈ [0, p_max_kw] (rough sunlight approximation).
+
+For battery:
+
+p_actual_kw random around 0 (charging/discharging).
+
+SOC updated via simple energy balance.
+
+For each EV:
+
+If a setpoint exists:
+
+Clamp to [0, p_max_kw].
+
+Move LAST_P_ACTUAL toward setpoint at a fixed ramp rate (±1 kW per step) plus small random noise.
+
+Else:
+
+Use a default random charging behavior.
+
+Publish telemetry payloads to der/telemetry/<deviceId> as JSON.
+
+This creates visible dynamics for the controller and dashboard to react to.
+
+6. Operational Notes
+6.1 Dependencies
+
+Postgres running locally with a mini_derms database and appropriate credentials (as in .env).
+
+Mosquitto MQTT broker on localhost:1883.
+
+Node.js and npm installed.
+
+Python 3.12 + virtualenv for the simulator.
+
+6.2 Typical Local Dev Workflow
+
+Backend
+
+cd Mini-DERMS-Feeder-Controller
+npm install
+npm run dev          # ts-node-dev, auto-reload
+
+
+Simulator
+
+cd Mini-DERMS-Feeder-Controller
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r simulator/requirements.txt
+cd simulator
+python simulator.py
+
+
+Frontend
+
+cd Mini-DERMS-Feeder-Controller/frontend
+npm install
+npm run dev          # Vite at http://localhost:5173
+
+
+Navigate to http://localhost:5173 to see:
+
+Feeder summary and load bar.
+
+Device table with PV, battery, and EVs.
+
+“Create DR Event” form to apply new feeder limits.
