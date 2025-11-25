@@ -1,4 +1,4 @@
-import { DeviceWithLatest, DrEvent, FeederSummary } from './types';
+import { DeviceWithLatest, DrEvent, FeederHistoryResponse, FeederSummary } from './types';
 
 export interface CreateDrEventInput {
   limitKw: number;
@@ -47,4 +47,13 @@ export async function createDrEvent(input: CreateDrEventInput): Promise<DrEvent>
   }
 
   return (await res.json()) as DrEvent;
+}
+
+export async function fetchFeederHistory(minutes = 30): Promise<FeederHistoryResponse> {
+  const params = new URLSearchParams({ minutes: String(minutes) });
+  const res = await fetch(`${BASE_URL}/api/feeder/history?` + params.toString());
+  if (!res.ok) {
+    throw new Error(`Failed to fetch feeder history: ${res.status}`);
+  }
+  return (await res.json()) as FeederHistoryResponse;
 }

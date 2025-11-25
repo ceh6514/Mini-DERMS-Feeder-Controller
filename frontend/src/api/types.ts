@@ -38,3 +38,13 @@ export interface DrEvent {
   limit_kw: number;
   type: string;
 }
+
+export interface FeederHistoryPoint {
+  ts: string; // ISO string
+  totalKw: number;
+}
+
+export interface FeederHistoryResponse {
+  limitKw: number;
+  points: FeederHistoryPoint[];
+}

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getCurrentFeederLimit } from '../repositories/eventsRepo';
-import { getLatestTelemetryPerDevice } from '../repositories/telemetryRepo';
+import { getFeederHistory, getLatestTelemetryPerDevice } from '../repositories/telemetryRepo';
 
 
 const router = Router();
@@ -36,6 +36,30 @@ router.get('/summary', async (_req, res) => {
     deviceCount: summary.deviceCount,
     byType: summary.byType,
   });
+});
+
+router.get('/history', async (req, res) => {
+  try {
+    const minutes = req.query.minutes ? Number(req.query.minutes) : 30;
+    const bucketSeconds = req.query.bucketSeconds ? Number(req.query.bucketSeconds) : 60;
+
+    const history = await getFeederHistory({ minutes, bucketSeconds });
+
+    // For simplicity use the current limit over the requested window.
+    const now = new Date();
+    const limitKw = await getCurrentFeederLimit(now);
+
+    res.json({
+      limitKw,
+      points: history.map((p) => ({
+        ts: p.ts.toISOString(),
+        totalKw: p.total_kw,
+      })),
+    });
+  } catch (err) {
+    console.error('[feeder history] error', err);
+    res.status(500).json({ error: 'Failed to load feeder history' });
+  }
 });
 
 export default router;
