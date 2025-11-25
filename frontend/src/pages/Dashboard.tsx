@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { fetchDevices, fetchFeederSummary } from '../api/client';
-import { DeviceWithLatest, FeederSummary } from '../api/types';
+import { fetchDevices, fetchFeederHistory, fetchFeederSummary } from '../api/client';
+import { DeviceWithLatest, FeederHistoryResponse, FeederSummary } from '../api/types';
 import DeviceTable from '../components/DeviceTable';
 import FeederChart from '../components/FeederChart';
 import FeederSummaryCard from '../components/FeederSummary';
 import DrEventForm from '../components/DrEventForm';
+import FeederHistoryChart from '../components/FeederHistoryChart';
 
 const POLL_INTERVAL_MS = 8000; // Refresh data roughly every 8 seconds.
 
@@ -13,6 +14,9 @@ const Dashboard = () => {
   const [devices, setDevices] = useState<DeviceWithLatest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<FeederHistoryResponse | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -20,24 +24,32 @@ const Dashboard = () => {
 
     const loadData = async () => {
       try {
-        const [summaryResponse, devicesResponse] = await Promise.all([
+        setHistoryLoading(true);
+
+        const [summaryResponse, devicesResponse, historyResponse] = await Promise.all([
           fetchFeederSummary(),
           fetchDevices(),
+          fetchFeederHistory(30),
         ]);
 
         if (!isMounted) return;
 
         setSummary(summaryResponse);
         setDevices(devicesResponse);
+        setHistory(historyResponse);
         setError(null);
+        setHistoryError(null);
       } catch (err) {
         console.error('Error loading dashboard data', err);
         if (isMounted) {
           setError('Unable to load data from the backend.');
+          const message = err instanceof Error ? err.message : 'Unknown error';
+          setHistoryError(message);
         }
       } finally {
         if (isMounted) {
           setLoading(false);
+          setHistoryLoading(false);
         }
       }
     };
@@ -92,6 +104,9 @@ const Dashboard = () => {
                 }
               }}
             />
+          </div>
+          <div className="grid" style={{ marginTop: '1rem' }}>
+            <FeederHistoryChart data={history} loading={historyLoading} error={historyError} />
           </div>
           <div className="table-wrapper card">
             <h2>Devices</h2>
