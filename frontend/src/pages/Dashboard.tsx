@@ -4,6 +4,7 @@ import { DeviceWithLatest, FeederSummary } from '../api/types';
 import DeviceTable from '../components/DeviceTable';
 import FeederChart from '../components/FeederChart';
 import FeederSummaryCard from '../components/FeederSummary';
+import DrEventForm from '../components/DrEventForm';
 
 const POLL_INTERVAL_MS = 8000; // Refresh data roughly every 8 seconds.
 
@@ -77,6 +78,20 @@ const Dashboard = () => {
           <div className="grid" style={{ marginTop: '1rem' }}>
             <FeederSummaryCard summary={summary} />
             <FeederChart summary={summary} />
+            <DrEventForm
+              onCreated={async () => {
+                try {
+                  const [summaryResponse, devicesResponse] = await Promise.all([
+                    fetchFeederSummary(),
+                    fetchDevices(),
+                  ]);
+                  setSummary(summaryResponse);
+                  setDevices(devicesResponse);
+                } catch (refreshError) {
+                  console.error('Failed to refresh after DR event', refreshError);
+                }
+              }}
+            />
           </div>
           <div className="table-wrapper card">
             <h2>Devices</h2>

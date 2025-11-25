@@ -30,3 +30,11 @@ export interface FeederSummary {
     }
   >;
 }
+
+export interface DrEvent {
+  id: string;
+  ts_start: string;
+  ts_end: string;
+  limit_kw: number;
+  type: string;
+}
