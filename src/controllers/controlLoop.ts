@@ -16,6 +16,7 @@ export interface DeviceWithTelemetry {
   currentSetpoint: number;
   pActual: number;
   pMax: number;
+  priority: number;
 }
 
 export function buildDeviceLookup(devices: Device[]): Map<string, Device> {
@@ -51,6 +52,7 @@ export function prepareEvDevices(
       const pMax = meta?.pMaxKw ?? row.device_p_max_kw ?? row.p_actual_kw ?? 0;
       const pActual = row.p_actual_kw ?? 0;
       const currentSetpoint = getCurrentSetpoint(row.device_id, row);
+      const priority = meta?.priority ?? 1;
 
       return {
         device: meta ?? {
@@ -63,6 +65,7 @@ export function prepareEvDevices(
         currentSetpoint,
         pActual,
         pMax,
+        priority: priority > 0 ? priority : 1,
       };
     });
 }
@@ -72,11 +75,17 @@ export function computeAllowedShares(
   availableForEv: number
 ): Map<string, number> {
   const allowed = new Map<string, number>();
-  const totalWeight = evDevices.reduce((sum, ev) => sum + (ev.pMax > 0 ? ev.pMax : 1), 0);
+  const totalWeight = evDevices.reduce((sum, ev) => {
+    const capacityWeight = ev.pMax > 0 ? ev.pMax : 1;
+    const priorityWeight = Math.max(ev.priority, 1);
+    return sum + capacityWeight * priorityWeight;
+  }, 0);
   if (totalWeight <= 0) return allowed;
 
   for (const ev of evDevices) {
-    const weight = ev.pMax > 0 ? ev.pMax : 1;
+    const capacityWeight = ev.pMax > 0 ? ev.pMax : 1;
+    const priorityWeight = Math.max(ev.priority, 1);
+    const weight = capacityWeight * priorityWeight;
     const share = (availableForEv * weight) / totalWeight;
     allowed.set(ev.device.id, Math.min(Math.max(0, share), ev.pMax));
   }
@@ -188,7 +197,11 @@ export function startControlLoop() {
       if (commands.length > 0) {
         console.log(
           '[controlLoop] ev commands',
-          commands.map((c) => ({ id: c.deviceId, setpoint: c.newSetpoint.toFixed(2) }))
+          commands.map((c) => ({
+            id: c.deviceId,
+            setpoint: c.newSetpoint.toFixed(2),
+            priority: evDevices.find((ev) => ev.device.id === c.deviceId)?.priority,
+          }))
         );
         publishCommands(
           commands,

@@ -83,12 +83,12 @@ export async function getFeederHistory(options?: {
 
   const text = `
     SELECT
-      to_timestamp(floor(extract(epoch FROM ts) / $2) * $2) AS bucket_ts,
+      to_timestamp(floor(extract(epoch FROM ts) / $2) * $2) AS ts,
       SUM(p_actual_kw) AS total_kw
     FROM telemetry
     WHERE ts >= $1
-    GROUP BY bucket_ts
-    ORDER BY bucket_ts ASC;
+    GROUP BY ts
+    ORDER BY ts ASC;
   `;
 
   const { rows } = await query<FeederHistoryPoint>(text, [windowStart, bucketSeconds]);

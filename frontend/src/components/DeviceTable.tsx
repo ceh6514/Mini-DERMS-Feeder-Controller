@@ -22,6 +22,7 @@ const DeviceTable = ({ devices }: Props) => {
           <th>Device ID</th>
           <th>Type</th>
           <th>Site</th>
+          <th>Priority</th>
           <th>p_actual_kw</th>
           <th>p_max_kw</th>
           <th>SOC</th>
@@ -36,6 +37,11 @@ const DeviceTable = ({ devices }: Props) => {
               <td>{device.id}</td>
               <td style={{ textTransform: 'capitalize' }}>{device.type}</td>
               <td>{device.siteId}</td>
+              <td>
+                {device.type === 'ev'
+                  ? device.priority ?? '—'
+                  : '—'}
+              </td>
               <td>{latest ? latest.p_actual_kw.toFixed(1) : '—'}</td>
               <td>{device.pMaxKw.toFixed(1)}</td>
               <td>{latest?.soc != null ? `${latest.soc}%` : '—'}</td>

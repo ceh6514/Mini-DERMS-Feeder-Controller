@@ -15,6 +15,7 @@ export interface DeviceWithLatest {
   type: string;
   siteId: string;
   pMaxKw: number;
+  priority?: number | null;
   latestTelemetry: DeviceTelemetry | null;
 }
 

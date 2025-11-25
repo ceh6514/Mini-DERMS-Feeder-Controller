@@ -22,6 +22,7 @@ function parseAndStoreMessage(topic: string, payload: Buffer) {
       soc?: number | null;
       site_id?: string;
       p_max_kw?: number;
+      priority?: number | null;
     };
 
     const id = raw.deviceId ?? deviceId;
@@ -36,6 +37,10 @@ function parseAndStoreMessage(topic: string, payload: Buffer) {
       raw.soc !== undefined && raw.soc !== null ? Number(raw.soc) : null;
     const siteId = raw.site_id ?? 'default';
     const pMaxKw = raw.p_max_kw ?? 0;
+    const priority =
+      raw.priority !== undefined && raw.priority !== null
+        ? Number(raw.priority)
+        : null;
 
     if (!id) {
       console.warn('[mqttClient] telemetry without deviceId, topic=', topic);
@@ -48,6 +53,7 @@ function parseAndStoreMessage(topic: string, payload: Buffer) {
       type,
       siteId,
       pMaxKw,
+      priority,
     }).catch((err) => {
       console.error('[mqttClient] failed to upsert device', err);
     });
