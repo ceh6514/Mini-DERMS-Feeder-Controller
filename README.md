@@ -73,6 +73,10 @@ npm install
 
 The server listens on `PORT` (default `3001`) and exposes a simple health check at `/api/health`. Ensure PostgreSQL and your MQTT broker are running before starting; the server will continue without MQTT if it cannot connect.
 
+## API documentation
+- Browse interactive docs at http://localhost:3001/api/docs (driven by the OpenAPI spec at `/api/openapi.json`).
+- A concise endpoint reference with example `curl` commands lives in [docs/api.md](docs/api.md).
+
 ## Run the device simulator (optional)
 The Python simulator publishes telemetry for a PV array, battery, and EV charger over MQTT.
 
