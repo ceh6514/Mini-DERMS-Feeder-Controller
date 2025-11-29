@@ -6,7 +6,9 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "TS_NODE_TRANSPILE_ONLY=1 node --require ts-node/register --test tests/**/*.test.ts"
+    "test": "TS_NODE_TRANSPILE_ONLY=1 node --require ts-node/register --test tests/**/*.test.ts",
+    "dev:stack": "docker compose up --build",
+    "stop:stack": "docker compose down"
   },
   "dependencies": {
     "cors": "^2.8.5",
