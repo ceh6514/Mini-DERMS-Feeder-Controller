@@ -7,6 +7,31 @@ import { startControlLoop } from './controllers/controlLoop';
 import feederRouter from './routes/feeder';
 import devicesRouter from './routes/devices';
 import eventsRouter from './routes/events';
+import { openApiSpec } from './openapi';
+
+const swaggerHtml = `<!DOCTYPE html>
+<html>
+  <head>
+    <title>Mini DERMS API Docs</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css"
+    />
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script>
+      window.onload = () => {
+        SwaggerUIBundle({
+          url: '/api/openapi.json',
+          dom_id: '#swagger-ui',
+          presets: [SwaggerUIBundle.presets.apis],
+        });
+      };
+    </script>
+  </body>
+</html>`;
 
 async function startServer() {
   try {
@@ -31,6 +56,14 @@ async function startServer() {
 
     app.get('/api/health', (_req, res) => {
       res.json({ status: 'ok' });
+    });
+
+    app.get('/api/openapi.json', (_req, res) => {
+      res.json(openApiSpec);
+    });
+
+    app.get('/api/docs', (_req, res) => {
+      res.type('html').send(swaggerHtml);
     });
 
     app.use('/api/feeder', feederRouter);
