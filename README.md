@@ -3,28 +3,57 @@
 Controls a fleet of simulated DERs (solar/battery/EV chargers). Uses messaging (MQTT), a time-series database, and a backend service that makes control decisions. Has a small dashboard showing what the system is doing.
 
 ## Prerequisites
+- Docker and Docker Compose (for the one-command stack)
 - Node.js 18+ and npm
 - PostgreSQL reachable with a database you can write to (defaults: `postgres/postgres` on `localhost:5432` with database `mini_derms`)
 - An MQTT broker (defaults: `localhost:1883`; e.g., run [Eclipse Mosquitto](https://mosquitto.org/))
 - (Optional) Python 3.9+ if you want to run the included device simulator
 
+## Docker Compose quickstart
+Bring up PostgreSQL, Mosquitto, the backend, and the frontend with one command:
+
+1. Copy the sample env files:
+   ```
+   cp .env.example .env
+   cp frontend/.env.example frontend/.env
+   ```
+2. Start the stack (runs in the foreground):
+   ```
+   npm run dev:stack
+   ```
+3. Open the dashboard at http://localhost:5173 (backend API at http://localhost:3001).
+
+Use the included scripts to stop the stack and tear down containers:
+
+```
+npm run stop:stack
+```
+
+Default containerized credentials and ports:
+- PostgreSQL: `postgres/postgres` on `localhost:5432` using database `mini_derms`
+- MQTT broker: `localhost:1883` (anonymous connections enabled for local use)
+- Backend API: `localhost:3001`
+- Frontend: `localhost:5173`
+
 ## Environment
-The server reads settings from environment variables via a `.env` file:
+The server reads settings from environment variables via a `.env` file (see `.env.example` for defaults geared toward Docker Compose):
 
 ```
 PORT=3001
-DB_HOST=localhost
+DB_HOST=db
 DB_PORT=5432
 DB_USER=postgres
 DB_PASSWORD=postgres
 DB_NAME=mini_derms
-MQTT_HOST=localhost
+MQTT_HOST=mosquitto
 MQTT_PORT=1883
 CONTROL_INTERVAL_SECONDS=60
 FEEDER_DEFAULT_LIMIT_KW=250
 ```
 
 `src/config.ts` applies the same defaults shown above if variables are omitted. The database tables are created automatically on startup.
+
+The frontend can target a different API URL by setting `VITE_API_URL` in `frontend/.env` (see `frontend/.env.example`).
 
 ## Install dependencies
 ```
