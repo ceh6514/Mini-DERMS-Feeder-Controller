@@ -21,7 +21,7 @@ Bring up PostgreSQL, Mosquitto, the backend, and the frontend with one command:
    ```
    npm run dev:stack
    ```
-3. Open the dashboard at http://localhost:5173 (backend API at http://localhost:3001).
+3. Open the dashboard at http://localhost:5173 to watch the system update in real time (backend API at http://localhost:3001).
 
 Use the included scripts to stop the stack and tear down containers:
 
@@ -72,6 +72,25 @@ npm install
   ```
 
 The server listens on `PORT` (default `3001`) and exposes a simple health check at `/api/health`. Ensure PostgreSQL and your MQTT broker are running before starting; the server will continue without MQTT if it cannot connect.
+
+## Run the frontend
+The React dashboard lives in `frontend/` and targets the backend API at `VITE_API_URL` (default `http://localhost:3001`). Copy `frontend/.env.example` to `frontend/.env` if you need to override the API URL.
+
+- Install dependencies (from `frontend/`):
+  ```
+  npm install
+  ```
+- Start the development server for local work (serves at http://localhost:5173):
+  ```
+  npm run dev
+  ```
+- Build a production bundle and serve it locally for QA (preview runs on http://localhost:4173):
+  ```
+  npm run build
+  npm run preview
+  ```
+
+The dashboard polls the backend for device telemetry and control status. If the API runs on a different host or port, set `VITE_API_URL` in `frontend/.env` before starting the dev server or preview.
 
 ## API documentation
 - Browse interactive docs at http://localhost:3001/api/docs (driven by the OpenAPI spec at `/api/openapi.json`).
