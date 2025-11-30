@@ -1,13 +1,17 @@
 import json
 import math
+import os
 import random
 import time
 from datetime import datetime, timedelta
 
 import paho.mqtt.client as mqtt
 
-BROKER_HOST = "localhost"
-BROKER_PORT = 1883
+# Allow the broker address to be configured via environment variables so the
+# simulator can easily point at the Docker Compose Mosquitto instance
+# (BROKER_HOST=mosquitto) or a locally installed broker.
+BROKER_HOST = os.getenv("BROKER_HOST", "localhost")
+BROKER_PORT = int(os.getenv("BROKER_PORT", "1883"))
 DT_SECONDS = 5.0
 
 SUNRISE_HOUR = 6
@@ -210,7 +214,7 @@ def main():
                 topic = f"der/telemetry/{device_id}"
                 client.publish(topic, json.dumps(payload))
 
-            if tick % 60 == 0:
+            if tick == 1 or tick % 12 == 0:
                 print(
                     f"[sim] t={sim_time} pv={pv_kw:.1f}kW "
                     f"bat={BATTERY_STATE['p_actual_kw']:.1f}kW soc={BATTERY_STATE['soc']:.2f} "
