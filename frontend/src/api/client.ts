@@ -5,7 +5,10 @@ export interface CreateDrEventInput {
   durationMinutes: number;
 }
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
+const BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  `${window.location.protocol}//${window.location.hostname}:3001`;
+
 
 // Fetch feeder summary from the backend.
 export async function fetchFeederSummary(): Promise<FeederSummary> {
