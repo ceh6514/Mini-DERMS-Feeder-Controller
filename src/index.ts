@@ -1,8 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import config from './config';
-import { initSchema } from './db';
-import { startMqttClient } from './mqttClient';
+import { initSchema, pool } from './db';
+import { getMqttStatus, startMqttClient } from './mqttClient';
 import { startControlLoop } from './controllers/controlLoop';
 import feederRouter from './routes/feeder';
 import devicesRouter from './routes/devices';
@@ -54,8 +54,20 @@ async function startServer() {
     app.use(cors());
     app.use(express.json());
 
-    app.get('/api/health', (_req, res) => {
-      res.json({ status: 'ok' });
+    app.get('/api/health', async (_req, res) => {
+      let dbOk = true;
+      try {
+        await pool.query('SELECT 1');
+      } catch (err) {
+        dbOk = false;
+        console.error('[health] db check failed', err);
+      }
+
+      res.json({
+        status: dbOk ? 'ok' : 'degraded',
+        db: { ok: dbOk },
+        mqtt: getMqttStatus(),
+      });
     });
 
     app.get('/api/openapi.json', (_req, res) => {

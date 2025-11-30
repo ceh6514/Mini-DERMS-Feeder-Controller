@@ -77,14 +77,16 @@ export function computeAllowedShares(
   const allowed = new Map<string, number>();
   const totalWeight = evDevices.reduce((sum, ev) => {
     const baseCapacity = ev.pMax > 0 ? ev.pMax : 1;
-    const priorityFactor = Math.max(ev.priority, 1);
+    const priority = Number.isFinite(ev.priority) ? ev.priority : 1;
+    const priorityFactor = Math.max(priority, 1);
     return sum + baseCapacity * priorityFactor;
   }, 0);
   if (totalWeight <= 0) return allowed;
 
   for (const ev of evDevices) {
     const baseCapacity = ev.pMax > 0 ? ev.pMax : 1;
-    const priorityFactor = Math.max(ev.priority, 1);
+    const priority = Number.isFinite(ev.priority) ? ev.priority : 1;
+    const priorityFactor = Math.max(priority, 1);
     const weight = baseCapacity * priorityFactor;
     const share = (availableForEv * weight) / totalWeight;
     allowed.set(ev.device.id, Math.min(Math.max(0, share), ev.pMax));

@@ -10,30 +10,48 @@ Controls a fleet of simulated DERs (solar/battery/EV chargers). Uses messaging (
 - (Optional) Python 3.9+ if you want to run the included device simulator
 
 ## Docker Compose quickstart
-Bring up PostgreSQL, Mosquitto, the backend, and the frontend with one command:
+Run the whole stack (PostgreSQL + Mosquitto + backend + frontend) with two commands:
 
 1. Copy the sample env files:
-   ```
+   ```bash
    cp .env.example .env
    cp frontend/.env.example frontend/.env
    ```
-2. Start the stack (runs in the foreground):
-   ```
+2. Start the stack (builds images if needed and streams logs):
+   ```bash
    npm run dev:stack
    ```
-3. Open the dashboard at http://localhost:5173 to watch the system update in real time (backend API at http://localhost:3001).
+   The backend and frontend hot-reload because the repo is mounted into the containers.
 
-Use the included scripts to stop the stack and tear down containers:
+Open the dashboard at http://localhost:5173 (API at http://localhost:3001). Stop the stack with:
 
-```
+```bash
 npm run stop:stack
 ```
 
-Default containerized credentials and ports:
+To include the Python device simulator inside Docker, add the `sim` profile:
+
+```bash
+docker compose --profile sim up --build
+```
+
+Defaults inside Docker:
 - PostgreSQL: `postgres/postgres` on `localhost:5432` using database `mini_derms`
 - MQTT broker: `localhost:1883` (anonymous connections enabled for local use)
 - Backend API: `localhost:3001`
 - Frontend: `localhost:5173`
+
+### Verify everything is talking
+Use these quick checks while the stack is running:
+
+```bash
+# Backend + DB + MQTT status
+curl -s http://localhost:3001/api/health | jq
+
+# Confirm devices are flowing in from the simulator
+curl -s http://localhost:3001/api/devices | jq 'length'
+```
+The first command shows whether the database and MQTT client are connected. The second should return a non-zero device count once the simulator is publishing.
 
 ## Environment
 The server reads settings from environment variables via a `.env` file (see `.env.example` for defaults geared toward Docker Compose):
@@ -99,16 +117,20 @@ The dashboard polls the backend for device telemetry and control status. If the 
 ## Run the device simulator (optional)
 The Python simulator publishes telemetry for a PV array, battery, and EV charger over MQTT.
 
-1. Create a virtual environment and install requirements:
-   ```
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -r simulator/requirements.txt
-   ```
-2. Start the simulator (MQTT broker must be reachable on `MQTT_HOST:MQTT_PORT`):
-   ```
-   python simulator/simulator.py
-   ```
+**Easiest path (inside Docker):**
+```bash
+docker compose --profile sim up --build
+```
+The simulator container is placed on the same network as Mosquitto and the backend so devices should appear within a few seconds.
+
+**Run locally against Docker Compose services:**
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r simulator/requirements.txt
+BROKER_HOST=localhost BROKER_PORT=1883 python simulator/simulator.py
+```
+Keep the simulator running; telemetry will flow into the stack through Mosquitto and devices will populate automatically via the `/api/devices` endpoint.
 
 Telemetry is published every ~5 seconds on topics like `der/telemetry/pv-001`. Control messages to `der/control/#` will be printed to the simulator console.
 
