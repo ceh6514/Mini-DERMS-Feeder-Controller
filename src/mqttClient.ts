@@ -3,7 +3,8 @@ import config from './config';
 import { upsertDevice } from './repositories/devicesRepo';
 import { insertTelemetry } from './repositories/telemetryRepo';
 
-export let mqttClient: MqttClient;
+export let mqttClient: MqttClient | null = null;
+let lastError: string | null = null;
 
 /**
  * Parse a telemetry message and write it into the DB.
@@ -86,6 +87,7 @@ export async function startMqttClient(): Promise<void> {
   });
 
   mqttClient.on('connect', () => {
+    lastError = null;
     console.log(
       '[mqttClient] connected to MQTT broker',
       `${config.mqtt.host}:${config.mqtt.port}`
@@ -110,8 +112,26 @@ export async function startMqttClient(): Promise<void> {
   });
 
   mqttClient.on('error', (err) => {
+    lastError = err.message;
     console.error('[mqttClient] connection error', err);
   });
 
+  mqttClient.on('reconnect', () => {
+    console.warn('[mqttClient] reconnecting to broker...');
+  });
+
+  mqttClient.on('offline', () => {
+    console.warn('[mqttClient] broker offline or unreachable');
+  });
+
   //We don't await anything here; startup should not block on MQTT
+}
+
+export function getMqttStatus() {
+  return {
+    host: config.mqtt.host,
+    port: config.mqtt.port,
+    connected: Boolean(mqttClient?.connected),
+    lastError,
+  };
 }

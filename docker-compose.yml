@@ -57,6 +57,18 @@ services:
     ports:
       - "5173:5173"
 
+  simulator:
+    build:
+      context: ./simulator
+    restart: unless-stopped
+    environment:
+      BROKER_HOST: mosquitto
+      BROKER_PORT: 1883
+    depends_on:
+      - mosquitto
+    profiles:
+      - sim
+
 
 
 volumes:
