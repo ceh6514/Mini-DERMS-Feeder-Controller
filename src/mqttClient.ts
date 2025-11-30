@@ -8,7 +8,7 @@ export let mqttClient: MqttClient;
 /**
  * Parse a telemetry message and write it into the DB.
  */
-function parseAndStoreMessage(topic: string, payload: Buffer) {
+async function parseAndStoreMessage(topic: string, payload: Buffer) {
   const topicParts = topic.split('/');
   const deviceId = topicParts[2] ?? '';
 
@@ -48,18 +48,16 @@ function parseAndStoreMessage(topic: string, payload: Buffer) {
     }
 
     //Upsert device metadata (best-effort)
-    upsertDevice({
+    await upsertDevice({
       id,
       type,
       siteId,
       pMaxKw,
       priority,
-    }).catch((err) => {
-      console.error('[mqttClient] failed to upsert device', err);
     });
 
-    //Insert telemetry row
-    insertTelemetry({
+    //Insert telemetry row (after the device row exists)
+    await insertTelemetry({
       device_id: id,
       ts,
       type,
@@ -67,8 +65,6 @@ function parseAndStoreMessage(topic: string, payload: Buffer) {
       p_setpoint_kw: pSetpoint,
       soc,
       site_id: siteId,
-    }).catch((err) => {
-      console.error('[mqttClient] failed to insert telemetry', err);
     });
   } catch (err) {
     console.error('[mqttClient] failed to parse telemetry', err);
@@ -107,7 +103,9 @@ export async function startMqttClient(): Promise<void> {
   mqttClient.on('message', (topic, payload) => {
     //Handle telemetry messages
     if (topic.startsWith('der/telemetry/')) {
-      parseAndStoreMessage(topic, payload);
+      parseAndStoreMessage(topic, payload).catch((err) => {
+        console.error('[mqttClient] failed to handle telemetry message', err);
+      });
     }
   });
 
