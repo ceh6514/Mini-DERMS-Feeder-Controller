@@ -180,6 +180,63 @@ export const openApiSpec = {
         },
       },
     },
+    '/api/simulation/mode': {
+      get: {
+        summary: 'Get the active simulation profile',
+        responses: {
+          200: {
+            description: 'Active day/night profile',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/SimulationModeResponse' },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        summary: 'Set the simulation profile to day or night',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  mode: { type: 'string', enum: ['day', 'night'] },
+                },
+                required: ['mode'],
+              },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description: 'Updated profile state',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/SimulationModeResponse' },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/api/simulation/mode/auto': {
+      post: {
+        summary: 'Clear manual overrides and return to automatic day/night switching',
+        responses: {
+          200: {
+            description: 'Profile reset to follow time-of-day',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/SimulationModeResponse' },
+              },
+            },
+          },
+        },
+      },
+    },
   },
   components: {
     schemas: {
@@ -232,6 +289,15 @@ export const openApiSpec = {
           type: { type: 'string' },
         },
         required: ['tsStart', 'tsEnd', 'limitKw', 'type'],
+      },
+      SimulationModeResponse: {
+        type: 'object',
+        properties: {
+          mode: { type: 'string', enum: ['day', 'night'] },
+          source: { type: 'string', enum: ['auto', 'manual'] },
+          lastUpdated: { type: 'string', nullable: true, format: 'date-time' },
+        },
+        required: ['mode', 'source', 'lastUpdated'],
       },
     },
   },

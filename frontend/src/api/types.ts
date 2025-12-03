@@ -49,3 +49,11 @@ export interface FeederHistoryResponse {
   limitKw: number;
   points: FeederHistoryPoint[];
 }
+
+export type SimulationMode = 'day' | 'night';
+
+export interface SimulationModeResponse {
+  mode: SimulationMode;
+  source: 'auto' | 'manual';
+  lastUpdated: string | null;
+}

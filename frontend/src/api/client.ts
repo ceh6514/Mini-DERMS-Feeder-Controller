@@ -1,4 +1,11 @@
-import { DeviceWithLatest, DrEvent, FeederHistoryResponse, FeederSummary } from './types';
+import {
+  DeviceWithLatest,
+  DrEvent,
+  FeederHistoryResponse,
+  FeederSummary,
+  SimulationMode,
+  SimulationModeResponse,
+} from './types';
 
 export interface CreateDrEventInput {
   limitKw: number;
@@ -59,4 +66,34 @@ export async function fetchFeederHistory(minutes = 30): Promise<FeederHistoryRes
     throw new Error(`Failed to fetch feeder history: ${res.status}`);
   }
   return (await res.json()) as FeederHistoryResponse;
+}
+
+export async function fetchSimulationMode(): Promise<SimulationModeResponse> {
+  const res = await fetch(`${BASE_URL}/api/simulation/mode`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch simulation mode');
+  }
+  return (await res.json()) as SimulationModeResponse;
+}
+
+export async function setSimulationMode(mode: SimulationMode): Promise<SimulationModeResponse> {
+  const res = await fetch(`${BASE_URL}/api/simulation/mode`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to update simulation mode: ${text}`);
+  }
+  return (await res.json()) as SimulationModeResponse;
+}
+
+export async function resetSimulationMode(): Promise<SimulationModeResponse> {
+  const res = await fetch(`${BASE_URL}/api/simulation/mode/auto`, { method: 'POST' });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to reset simulation mode: ${text}`);
+  }
+  return (await res.json()) as SimulationModeResponse;
 }

@@ -8,6 +8,7 @@ import feederRouter from './routes/feeder';
 import devicesRouter from './routes/devices';
 import eventsRouter from './routes/events';
 import { openApiSpec } from './openapi';
+import simulationRouter from './routes/simulation';
 
 const swaggerHtml = `<!DOCTYPE html>
 <html>
@@ -81,6 +82,7 @@ async function startServer() {
     app.use('/api/feeder', feederRouter);
     app.use('/api', devicesRouter);
     app.use('/api/events', eventsRouter);
+    app.use('/api/simulation', simulationRouter);
 
     app.listen(config.port, () => {
       console.log(
