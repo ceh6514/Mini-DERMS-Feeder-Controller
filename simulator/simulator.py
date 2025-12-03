@@ -16,6 +16,8 @@ DT_SECONDS = 5.0
 
 SUNRISE_HOUR = 6
 SUNSET_HOUR = 20
+DAY_START_HOUR = 7
+NIGHT_START_HOUR = 23
 
 BATTERY_KWH = 20.0
 BATTERY_MIN_SOC = 0.1
@@ -52,12 +54,14 @@ for device in DEVICES:
 # Track commanded setpoints and last measured power to smooth EV ramping
 SETPOINTS: dict[str, float] = {}
 LAST_P_ACTUAL: dict[str, float] = {}
+SIM_PROFILE_OVERRIDE: str | None = None
 
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     print("[sim] connected to MQTT with result code", reason_code)
     # subscribe for control messages (not strictly required yet)
     client.subscribe("der/control/#")
+    client.subscribe("der/simulation/profile")
 
 
 def on_message(client, userdata, msg):
@@ -73,6 +77,16 @@ def on_message(client, userdata, msg):
                 print(f"[sim] control msg {device_id} setpoint -> {SETPOINTS[device_id]:.2f} kW")
         except json.JSONDecodeError:
             print("[sim] failed to parse control payload", payload)
+    elif topic == "der/simulation/profile":
+        try:
+            data = json.loads(payload)
+            profile = data.get("profile")
+            if profile in ("day", "night"):
+                global SIM_PROFILE_OVERRIDE
+                SIM_PROFILE_OVERRIDE = profile
+                print(f"[sim] simulation profile override -> {profile}")
+        except json.JSONDecodeError:
+            print("[sim] failed to parse simulation profile payload", payload)
 
 
 def pv_power_kw(sim_time: datetime, p_max_kw: float) -> float:
@@ -104,10 +118,45 @@ def ramp_power(
     return max(p_min, min(next_power, p_max))
 
 
-def compute_ev_power(device_id: str, p_max: float):
+def derive_profile(sim_time: datetime) -> str:
+    hour = sim_time.hour + sim_time.minute / 60.0
+    return "day" if DAY_START_HOUR <= hour < NIGHT_START_HOUR else "night"
+
+
+def active_profile(sim_time: datetime) -> str:
+    return SIM_PROFILE_OVERRIDE or derive_profile(sim_time)
+
+
+def profile_load_multiplier(sim_time: datetime, profile: str) -> float:
+    hour = sim_time.hour + sim_time.minute / 60.0
+
+    if profile == "day":
+        # Peak in the middle of the day with a smooth ramp up/down.
+        day_fraction = max(0.0, min(1.0, (hour - DAY_START_HOUR) / (NIGHT_START_HOUR - DAY_START_HOUR)))
+        solar_curve = 0.7 + 0.6 * math.sin(math.pi * day_fraction)
+        baseline = 1.2  # ~20% higher than night
+        return baseline * solar_curve
+
+    # Nighttime: start with a sharp drop at 23:00 and gently rise toward dawn.
+    night_window = 24 - NIGHT_START_HOUR + DAY_START_HOUR  # 8 hours
+    if hour >= NIGHT_START_HOUR:
+        night_progress = (hour - NIGHT_START_HOUR) / night_window
+    else:
+        night_progress = (hour + (24 - NIGHT_START_HOUR)) / night_window
+
+    night_progress = max(0.0, min(1.0, night_progress))
+    low = 0.55
+    high = 0.95
+    transition = low + (high - low) * (1 - math.cos(math.pi * night_progress)) / 2.0
+    return transition
+
+
+def compute_ev_power(device_id: str, p_max: float, load_multiplier: float):
     setpoint = SETPOINTS.get(device_id)
     if setpoint is None:
-        target = random.uniform(0.0, p_max)
+        target_center = p_max * 0.55 * load_multiplier
+        jitter = random.gauss(0, p_max * 0.08)
+        target = max(0.0, min(p_max, target_center + jitter))
     else:
         target = max(0.0, min(p_max, float(setpoint)))
 
@@ -134,6 +183,9 @@ def main():
             sim_time += timedelta(seconds=DT_SECONDS)
             tick += 1
 
+            profile = active_profile(sim_time)
+            load_multiplier = profile_load_multiplier(sim_time, profile)
+
             pv_kw = 0.0
 
             for d in DEVICES:
@@ -150,11 +202,11 @@ def main():
                 elif dtype == "battery":
                     soc = BATTERY_STATE["soc"]
                     if soc > 0.55:
-                        target_p_kw = 1.5
+                        target_p_kw = 1.2 * load_multiplier
                     elif soc < 0.45:
-                        target_p_kw = -1.5
+                        target_p_kw = -1.2 * load_multiplier
                     else:
-                        target_p_kw = 0.0
+                        target_p_kw = 0.2 * (load_multiplier - 1.0)
 
                     p_actual = ramp_power(
                         BATTERY_STATE["p_actual_kw"],
@@ -174,7 +226,7 @@ def main():
                     BATTERY_STATE["soc"] = soc
                 elif dtype == "ev":
                     ev = EV_STATE[device_id]
-                    p_actual = compute_ev_power(device_id, p_max)
+                    p_actual = compute_ev_power(device_id, p_max, load_multiplier)
                     dt_hours = DT_SECONDS / 3600.0
                     energy_delta_kwh = p_actual * dt_hours
                     capacity = EV_CAPACITIES[device_id]
@@ -216,7 +268,7 @@ def main():
 
             if tick == 1 or tick % 12 == 0:
                 print(
-                    f"[sim] t={sim_time} pv={pv_kw:.1f}kW "
+                    f"[sim] t={sim_time} profile={profile} mult={load_multiplier:.2f} pv={pv_kw:.1f}kW "
                     f"bat={BATTERY_STATE['p_actual_kw']:.1f}kW soc={BATTERY_STATE['soc']:.2f} "
                     f"ev-001={EV_STATE['ev-001']['p_actual_kw']:.1f}kW soc={EV_STATE['ev-001']['soc']:.2f}"
                 )

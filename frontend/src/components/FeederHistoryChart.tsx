@@ -6,6 +6,50 @@ interface FeederHistoryChartProps {
   error: string | null;
 }
 
+type ChartPoint = { x: number; y: number };
+
+const controlPoint = (
+  current: ChartPoint,
+  previous: ChartPoint,
+  next: ChartPoint,
+  reverse = false
+) => {
+  const smoothing = 0.2;
+  const p = previous ?? current;
+  const n = next ?? current;
+  const o = {
+    length: Math.hypot(n.x - p.x, n.y - p.y),
+    angle: Math.atan2(n.y - p.y, n.x - p.x),
+  };
+
+  const angle = o.angle + (reverse ? Math.PI : 0);
+  const length = o.length * smoothing;
+
+  return {
+    x: current.x + Math.cos(angle) * length,
+    y: current.y + Math.sin(angle) * length,
+  };
+};
+
+const bezierCommand = (point: ChartPoint, i: number, a: ChartPoint[]) => {
+  const cps = controlPoint(a[i - 1] ?? point, a[i - 2] ?? point, point);
+  const cpe = controlPoint(point, a[i - 1] ?? point, a[i + 1] ?? point, true);
+  return `C ${cps.x.toFixed(2)} ${cps.y.toFixed(2)} ${cpe.x.toFixed(2)} ${cpe.y.toFixed(2)} ${
+    point.x
+  } ${point.y}`;
+};
+
+const buildSmoothPath = (points: ChartPoint[]) => {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+
+  const commands = points.map((point, idx, arr) =>
+    idx === 0 ? `M ${point.x} ${point.y}` : bezierCommand(point, idx, arr)
+  );
+
+  return commands.join(' ');
+};
+
 const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) => {
   if (loading) {
     return (
@@ -57,15 +101,16 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
     return padding.top + (1 - kw / yMax) * usableHeight;
   };
 
-  const pathD = data.points
-    .map((p, idx) => {
-      const x = xScale(p.ts);
-      const y = yScale(p.totalKw);
-      return `${idx === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
-    })
-    .join(' ');
+  const chartPoints: ChartPoint[] = data.points.map((p) => ({
+    x: xScale(p.ts),
+    y: yScale(p.totalKw),
+  }));
 
-  const areaD = `${pathD} L ${xScale(data.points[data.points.length - 1].ts).toFixed(2)} ${yScale(0)} L ${xScale(data.points[0].ts).toFixed(2)} ${yScale(0)} Z`;
+  const pathD = buildSmoothPath(chartPoints);
+
+  const first = chartPoints[0];
+  const last = chartPoints[chartPoints.length - 1];
+  const areaD = `${pathD} L ${last.x.toFixed(2)} ${yScale(0)} L ${first.x.toFixed(2)} ${yScale(0)} Z`;
 
   const formatTime = (ts: string) => {
     const d = new Date(ts);
@@ -84,21 +129,39 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
       <p className="subtitle" style={{ marginBottom: '0.5rem' }}>
         Total feeder output compared to the active limit.
       </p>
-      <svg width="100%" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Feeder history chart">
+      <svg
+        width="100%"
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Feeder history chart"
+        className="history-chart"
+      >
+        <defs>
+          <linearGradient id="historyArea" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="var(--accent-strong)" stopOpacity="0.22" />
+            <stop offset="100%" stopColor="var(--accent-strong)" stopOpacity="0" />
+          </linearGradient>
+        </defs>
         {/* Limit line */}
         <line
           x1={padding.left}
           y1={yScale(data.limitKw)}
           x2={width - padding.right}
           y2={yScale(data.limitKw)}
-          stroke="#ef4444"
+          stroke="var(--alert-strong)"
           strokeDasharray="6 4"
           strokeWidth={2}
         />
         {/* Area under total kW */}
-        <path d={areaD} fill="#dbeafe" stroke="none" opacity={0.6} />
+        <path d={areaD} fill="url(#historyArea)" stroke="none" />
         {/* Total kW line */}
-        <path d={pathD} fill="none" stroke="#2563eb" strokeWidth={3} strokeLinecap="round" />
+        <path
+          d={pathD}
+          fill="none"
+          stroke="var(--accent-strong)"
+          strokeWidth={3}
+          strokeLinecap="round"
+        />
 
         {/* Axes */}
         <line
@@ -106,20 +169,20 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
           y1={yScale(0)}
           x2={width - padding.right}
           y2={yScale(0)}
-          stroke="#cbd5e1"
+          stroke="var(--border-subtle)"
         />
         <line
           x1={padding.left}
           y1={padding.top}
           x2={padding.left}
           y2={height - padding.bottom}
-          stroke="#cbd5e1"
+          stroke="var(--border-subtle)"
         />
 
         {/* Y-axis labels */}
         {[0, yMax / 2, yMax].map((val) => (
           <g key={val}>
-            <text x={padding.left - 8} y={yScale(val) + 4} textAnchor="end" fontSize={12} fill="#475569">
+            <text x={padding.left - 8} y={yScale(val) + 4} textAnchor="end" fontSize={12} fill="var(--text-muted)">
               {val.toFixed(0)} kW
             </text>
             <line
@@ -127,7 +190,7 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
               y1={yScale(val)}
               x2={width - padding.right}
               y2={yScale(val)}
-              stroke="#e2e8f0"
+              stroke="var(--border-muted)"
               strokeDasharray="4 4"
             />
           </g>
@@ -141,7 +204,7 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
             y={height - padding.bottom + 20}
             textAnchor="middle"
             fontSize={12}
-            fill="#475569"
+            fill="var(--text-muted)"
           >
             {label.text}
           </text>
@@ -149,12 +212,12 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
 
         {/* Legend */}
         <g transform={`translate(${padding.left}, ${padding.top})`}>
-          <rect x={0} y={0} width={12} height={12} fill="#2563eb" />
-          <text x={18} y={11} fontSize={12} fill="#0f172a">
+          <rect x={0} y={0} width={12} height={12} fill="var(--accent-strong)" />
+          <text x={18} y={11} fontSize={12} fill="var(--text-strong)">
             Total kW
           </text>
-          <line x1={90} y1={6} x2={110} y2={6} stroke="#ef4444" strokeDasharray="6 4" strokeWidth={2} />
-          <text x={116} y={11} fontSize={12} fill="#0f172a">
+          <line x1={90} y1={6} x2={110} y2={6} stroke="var(--alert-strong)" strokeDasharray="6 4" strokeWidth={2} />
+          <text x={116} y={11} fontSize={12} fill="var(--text-strong)">
             Limit ({data.limitKw} kW)
           </text>
         </g>
