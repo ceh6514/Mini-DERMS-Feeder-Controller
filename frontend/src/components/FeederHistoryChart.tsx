@@ -8,46 +8,54 @@ interface FeederHistoryChartProps {
 
 type ChartPoint = { x: number; y: number };
 
-const controlPoint = (
-  current: ChartPoint,
-  previous: ChartPoint,
-  next: ChartPoint,
-  reverse = false
-) => {
-  const smoothing = 0.2;
-  const p = previous ?? current;
-  const n = next ?? current;
-  const o = {
-    length: Math.hypot(n.x - p.x, n.y - p.y),
-    angle: Math.atan2(n.y - p.y, n.x - p.x),
-  };
-
-  const angle = o.angle + (reverse ? Math.PI : 0);
-  const length = o.length * smoothing;
-
-  return {
-    x: current.x + Math.cos(angle) * length,
-    y: current.y + Math.sin(angle) * length,
-  };
-};
-
-const bezierCommand = (point: ChartPoint, i: number, a: ChartPoint[]) => {
-  const cps = controlPoint(a[i - 1] ?? point, a[i - 2] ?? point, point);
-  const cpe = controlPoint(point, a[i - 1] ?? point, a[i + 1] ?? point, true);
-  return `C ${cps.x.toFixed(2)} ${cps.y.toFixed(2)} ${cpe.x.toFixed(2)} ${cpe.y.toFixed(2)} ${
-    point.x
-  } ${point.y}`;
-};
-
-const buildSmoothPath = (points: ChartPoint[]) => {
+const buildMonotonePath = (points: ChartPoint[]) => {
   if (points.length === 0) return '';
-  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+  if (points.length === 1) return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
 
-  const commands = points.map((point, idx, arr) =>
-    idx === 0 ? `M ${point.x} ${point.y}` : bezierCommand(point, idx, arr)
-  );
+  const slopes = [] as number[];
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const dx = points[i + 1].x - points[i].x;
+    slopes.push(dx === 0 ? 0 : (points[i + 1].y - points[i].y) / dx);
+  }
 
-  return commands.join(' ');
+  const tangents = points.map((_, i) => {
+    if (i === 0) return slopes[0];
+    if (i === points.length - 1) return slopes[slopes.length - 1];
+    return (slopes[i - 1] + slopes[i]) / 2;
+  });
+
+  for (let i = 0; i < slopes.length; i += 1) {
+    const slope = slopes[i];
+    if (slope === 0) {
+      tangents[i] = 0;
+      tangents[i + 1] = 0;
+    } else {
+      const a = tangents[i] / slope;
+      const b = tangents[i + 1] / slope;
+      const norm = Math.hypot(a, b);
+      if (norm > 3) {
+        const scale = 3 / norm;
+        tangents[i] = scale * a * slope;
+        tangents[i + 1] = scale * b * slope;
+      }
+    }
+  }
+
+  let path = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const p0 = points[i];
+    const p1 = points[i + 1];
+    const dx = p1.x - p0.x;
+    const c1x = p0.x + dx / 3;
+    const c1y = p0.y + (tangents[i] * dx) / 3;
+    const c2x = p1.x - dx / 3;
+    const c2y = p1.y - (tangents[i + 1] * dx) / 3;
+
+    path += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)} ${c2x.toFixed(2)} ${c2y.toFixed(2)} ${p1.x.toFixed(2)} ${p1.y.toFixed(2)}`;
+  }
+
+  return path;
 };
 
 const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) => {
@@ -84,11 +92,27 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
   const height = 240;
   const padding = { top: 20, right: 20, bottom: 35, left: 50 };
 
-  const values = data.points.map((p) => p.totalKw);
+  const sortedPoints = [...data.points]
+    .map((p) => ({ ...p, tsMs: new Date(p.ts).getTime() }))
+    .sort((a, b) => a.tsMs - b.tsMs);
+
+  const points = sortedPoints.reduce<
+    (typeof sortedPoints)[number][]
+  >((acc, point) => {
+    const prev = acc[acc.length - 1];
+    if (prev && prev.tsMs === point.tsMs) {
+      acc[acc.length - 1] = point;
+    } else {
+      acc.push(point);
+    }
+    return acc;
+  }, []);
+
+  const values = points.map((p) => p.totalKw);
   const yMax = Math.max(data.limitKw, ...values, 1);
 
-  const firstTs = new Date(data.points[0].ts).getTime();
-  const lastTs = new Date(data.points[data.points.length - 1].ts).getTime();
+  const firstTs = points[0].tsMs;
+  const lastTs = points[points.length - 1].tsMs;
   const span = Math.max(lastTs - firstTs, 1);
 
   const xScale = (ts: string) => {
@@ -101,26 +125,27 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
     return padding.top + (1 - kw / yMax) * usableHeight;
   };
 
-  const chartPoints: ChartPoint[] = data.points.map((p) => ({
+  const chartPoints: ChartPoint[] = points.map((p) => ({
     x: xScale(p.ts),
     y: yScale(p.totalKw),
   }));
 
-  const pathD = buildSmoothPath(chartPoints);
-
+  const pathD = buildMonotonePath(chartPoints);
   const first = chartPoints[0];
   const last = chartPoints[chartPoints.length - 1];
-  const areaD = `${pathD} L ${last.x.toFixed(2)} ${yScale(0)} L ${first.x.toFixed(2)} ${yScale(0)} Z`;
+  const areaD = pathD
+    ? `${pathD} L ${last.x.toFixed(2)} ${yScale(0)} L ${first.x.toFixed(2)} ${yScale(0)} Z`
+    : '';
 
   const formatTime = (ts: string) => {
     const d = new Date(ts);
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  const labelIndices = [0, Math.floor(data.points.length / 2), data.points.length - 1];
+  const labelIndices = [0, Math.floor(points.length / 2), points.length - 1];
   const labels = Array.from(new Set(labelIndices)).map((idx) => ({
-    x: xScale(data.points[idx].ts),
-    text: formatTime(data.points[idx].ts),
+    x: xScale(points[idx].ts),
+    text: formatTime(points[idx].ts),
   }));
 
   return (
