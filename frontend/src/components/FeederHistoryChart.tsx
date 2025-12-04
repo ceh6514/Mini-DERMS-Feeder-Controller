@@ -109,7 +109,9 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
   }, []);
 
   const values = points.map((p) => p.totalKw);
-  const yMax = Math.max(data.limitKw, ...values, 1);
+  const yMaxRaw = Math.max(data.limitKw, ...values, 1);
+  const yPadding = Math.max(yMaxRaw * 0.2, 25);
+  const yMax = yMaxRaw + yPadding;
 
   const firstTs = points[0].tsMs;
   const lastTs = points[points.length - 1].tsMs;
