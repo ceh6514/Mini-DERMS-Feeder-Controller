@@ -1,6 +1,10 @@
 import { Router } from 'express';
 import { getAllDevices } from '../repositories/devicesRepo';
-import { getLatestTelemetryPerDevice, getRecentTelemetry } from '../repositories/telemetryRepo';
+import {
+  getLatestTelemetryPerDevice,
+  getLatestSolarWeatherSample,
+  getRecentTelemetry,
+} from '../repositories/telemetryRepo';
 
 
 const router = Router();
@@ -29,6 +33,23 @@ router.get('/telemetry/:deviceId', async (req, res) => {
   const { deviceId } = req.params;
   const telemetry = await getRecentTelemetry(deviceId, 100);
   res.json(telemetry);
+});
+
+router.get('/solar-feeders/:feederId/latest-weather', async (req, res) => {
+  try {
+    const { feederId } = req.params;
+    const sample = await getLatestSolarWeatherSample(feederId);
+
+    if (!sample) {
+      res.status(404).json({ error: 'No data' });
+      return;
+    }
+
+    res.json(sample);
+  } catch (err) {
+    console.error('[latest solar weather] error', err);
+    res.status(500).json({ error: 'Failed to load latest solar weather' });
+  }
 });
 
 export default router;
