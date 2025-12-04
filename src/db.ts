@@ -34,7 +34,10 @@ export async function initSchema(): Promise<void> {
       p_actual_kw REAL NOT NULL,
       p_setpoint_kw REAL,
       soc REAL,
-      site_id TEXT NOT NULL
+      site_id TEXT NOT NULL,
+      cloud_cover_pct REAL NOT NULL DEFAULT 0,
+      shortwave_radiation_wm2 REAL NOT NULL DEFAULT 0,
+      estimated_power_w REAL NOT NULL DEFAULT 0
     );
   `);
 
@@ -46,6 +49,13 @@ export async function initSchema(): Promise<void> {
       limit_kw REAL NOT NULL,
       type TEXT NOT NULL
     );
+  `);
+
+  await pool.query(`
+    ALTER TABLE telemetry
+    ADD COLUMN IF NOT EXISTS cloud_cover_pct REAL NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS shortwave_radiation_wm2 REAL NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS estimated_power_w REAL NOT NULL DEFAULT 0;
   `);
 }
 
