@@ -99,3 +99,31 @@ export interface SimulationModeResponse {
   source: 'auto' | 'manual';
   lastUpdated: string | null;
 }
+
+export interface OfflineDeviceSummary {
+  deviceId: string;
+  lastHeartbeat: string | null;
+}
+
+export interface ControlLoopStatus {
+  status: 'idle' | 'ok' | 'error' | 'stalled';
+  lastIterationIso: string | null;
+  lastDurationMs: number | null;
+  lastError: string | null;
+  offlineDevices: OfflineDeviceSummary[];
+  offlineCount: number;
+  heartbeatTimeoutSeconds: number;
+  stallThresholdSeconds: number;
+}
+
+export interface HealthResponse {
+  status: 'ok' | 'degraded' | 'error';
+  db: { ok: boolean };
+  mqtt: {
+    host: string;
+    port: number;
+    connected: boolean;
+    lastError: string | null;
+  };
+  controlLoop: ControlLoopStatus;
+}

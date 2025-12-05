@@ -9,6 +9,7 @@ import devicesRouter from './routes/devices';
 import eventsRouter from './routes/events';
 import { openApiSpec } from './openapi';
 import simulationRouter from './routes/simulation';
+import { getControlLoopState } from './state/controlLoopMonitor';
 
 const swaggerHtml = `<!DOCTYPE html>
 <html>
@@ -64,10 +65,21 @@ async function startServer() {
         console.error('[health] db check failed', err);
       }
 
+      const controlLoop = getControlLoopState();
+      const offlineCount = controlLoop.offlineDevices.length;
+      const healthyLoop =
+        controlLoop.status !== 'error' && controlLoop.status !== 'stalled';
+      const overallStatus =
+        dbOk && offlineCount === 0 && healthyLoop ? 'ok' : 'degraded';
+
       res.json({
-        status: dbOk ? 'ok' : 'degraded',
+        status: overallStatus,
         db: { ok: dbOk },
         mqtt: getMqttStatus(),
+        controlLoop: {
+          ...controlLoop,
+          offlineCount,
+        },
       });
     });
 

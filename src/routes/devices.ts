@@ -6,6 +6,7 @@ import {
   getRecentTelemetry,
   insertTelemetry,
 } from '../repositories/telemetryRepo';
+import { recordHeartbeat } from '../state/controlLoopMonitor';
 
 
 const router = Router();
@@ -100,6 +101,8 @@ router.post('/telemetry', async (req, res) => {
     const device = await getDeviceById(device_id);
     const type = device?.type ?? 'manual';
     const siteId = device?.siteId ?? site_id;
+
+    recordHeartbeat(device_id, timestamp.getTime());
 
     await insertTelemetry({
       device_id,
