@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   fetchDevices,
   fetchFeederHistory,
@@ -18,6 +18,7 @@ import FeederChart from '../components/FeederChart';
 import FeederSummaryCard from '../components/FeederSummary';
 import DrEventForm from '../components/DrEventForm';
 import FeederHistoryChart from '../components/FeederHistoryChart';
+import TelemetryControlPanel from '../components/TelemetryControlPanel';
 
 const POLL_INTERVAL_MS = 8000; // Refresh data roughly every 8 seconds.
 
@@ -33,6 +34,19 @@ const Dashboard = () => {
   const [modeSource, setModeSource] = useState<'auto' | 'manual'>('auto');
   const [modeMessage, setModeMessage] = useState<string | null>(null);
   const [modeUpdating, setModeUpdating] = useState(false);
+
+  const refreshSummaryAndDevices = useCallback(async () => {
+    try {
+      const [summaryResponse, devicesResponse] = await Promise.all([
+        fetchFeederSummary(),
+        fetchDevices(),
+      ]);
+      setSummary(summaryResponse);
+      setDevices(devicesResponse);
+    } catch (refreshError) {
+      console.error('Failed to refresh devices and summary', refreshError);
+    }
+  }, []);
 
   useEffect(() => {
     document.body.dataset.theme = simulationMode;
@@ -180,18 +194,10 @@ const Dashboard = () => {
             <FeederChart summary={summary} />
             <DrEventForm
               onCreated={async () => {
-                try {
-                  const [summaryResponse, devicesResponse] = await Promise.all([
-                    fetchFeederSummary(),
-                    fetchDevices(),
-                  ]);
-                  setSummary(summaryResponse);
-                  setDevices(devicesResponse);
-                } catch (refreshError) {
-                  console.error('Failed to refresh after DR event', refreshError);
-                }
+                await refreshSummaryAndDevices();
               }}
             />
+            <TelemetryControlPanel onSubmitted={refreshSummaryAndDevices} />
           </div>
           <div className="grid" style={{ marginTop: '1rem' }}>
             <FeederHistoryChart data={history} loading={historyLoading} error={historyError} />
