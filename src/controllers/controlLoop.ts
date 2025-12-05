@@ -6,6 +6,15 @@ import {
 } from '../repositories/telemetryRepo';
 import { getAllDevices, Device } from '../repositories/devicesRepo';
 import { mqttClient } from '../mqttClient';
+import {
+  getOfflineDeviceIds,
+  markIterationError,
+  markIterationStart,
+  markIterationSuccess,
+  shouldAlertOffline,
+  shouldAlertStall,
+} from '../state/controlLoopMonitor';
+import { notifyOfflineDevices, notifyStalledLoop } from '../alerting';
 
 // Track the most recent setpoint we have commanded for each device.
 export const deviceSetpoints = new Map<string, number>();
@@ -168,23 +177,49 @@ export function startControlLoop() {
   const stepKw = 1.0;
 
   setInterval(async () => {
+    const now = new Date();
+    const nowMs = now.getTime();
+    const stalledState = shouldAlertStall(nowMs);
+    if (stalledState) {
+      notifyStalledLoop(stalledState);
+    }
+
+    const offlineToAlert = shouldAlertOffline(nowMs);
+    if (offlineToAlert.length) {
+      notifyOfflineDevices(offlineToAlert);
+    }
+
+    markIterationStart(nowMs);
+    let errored = false;
     try {
-      const now = new Date();
       const limitKw = await getCurrentFeederLimit(now);
       const latest = await getLatestTelemetryPerDevice();
+      const offlineDevices = getOfflineDeviceIds(nowMs);
+      if (offlineDevices.size > 0) {
+        console.warn(
+          `[controlLoop] ${offlineDevices.size} device(s) offline, excluding from allocation`,
+        );
+      }
+
+      const onlineTelemetry = latest.filter(
+        (row) => !offlineDevices.has(row.device_id)
+      );
       const devices = await getAllDevices();
       const deviceLookup = buildDeviceLookup(devices);
       const priorityLookup = new Map(
         devices.map((device) => [device.id, device.priority ?? 1])
       );
 
-      if (latest.length === 0) {
+      if (onlineTelemetry.length === 0) {
         console.log('[controlLoop] no telemetry yet, skipping tick');
         return;
       }
 
-      const totalKw = latest.reduce((sum, row) => sum + (row.p_actual_kw || 0), 0);
-      const evDevices = prepareEvDevices(latest, deviceLookup);
+      const totalKw = onlineTelemetry.reduce(
+        (sum, row) => sum + (row.p_actual_kw || 0),
+        0
+      );
+      const evDevices = prepareEvDevices(onlineTelemetry, deviceLookup);
       const totalEvKw = evDevices.reduce((sum, ev) => sum + ev.pActual, 0);
       const nonEvKw = totalKw - totalEvKw;
       const availableForEv = Math.max(limitKw - nonEvKw, 0);
@@ -296,7 +331,13 @@ export function startControlLoop() {
         console.log('[controlLoop] no setpoint changes beyond epsilon', deficitSummaries);
       }
     } catch (err) {
+      errored = true;
+      markIterationError(err, Date.now());
       console.error('[controlLoop] error', err);
+    } finally {
+      if (!errored) {
+        markIterationSuccess(Date.now());
+      }
     }
   }, intervalMs);
 }

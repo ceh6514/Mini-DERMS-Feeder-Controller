@@ -2,6 +2,7 @@ import { DeviceWithLatest } from '../api/types';
 
 interface Props {
   devices: DeviceWithLatest[];
+  offlineDeviceIds?: Set<string>;
 }
 
 const formatDate = (ts: string | null | undefined) => {
@@ -10,7 +11,7 @@ const formatDate = (ts: string | null | undefined) => {
   return date.toLocaleString();
 };
 
-const DeviceTable = ({ devices }: Props) => {
+const DeviceTable = ({ devices, offlineDeviceIds }: Props) => {
   if (devices.length === 0) {
     return <div className="subtitle">No devices found.</div>;
   }
@@ -19,6 +20,7 @@ const DeviceTable = ({ devices }: Props) => {
     <table>
       <thead>
         <tr>
+          <th>Status</th>
           <th>Device ID</th>
           <th>Type</th>
           <th>Site</th>
@@ -32,8 +34,15 @@ const DeviceTable = ({ devices }: Props) => {
       <tbody>
         {devices.map((device) => {
           const latest = device.latestTelemetry;
+          const isOffline = offlineDeviceIds?.has(device.id) ?? false;
           return (
             <tr key={device.id}>
+              <td>
+                <span className={`status-pill ${isOffline ? 'offline' : 'online'}`}>
+                  <span className={`status-dot ${isOffline ? 'offline' : 'online'}`} />
+                  {isOffline ? 'Offline' : 'Online'}
+                </span>
+              </td>
               <td>{device.id}</td>
               <td style={{ textTransform: 'capitalize' }}>{device.type}</td>
               <td>{device.siteId}</td>

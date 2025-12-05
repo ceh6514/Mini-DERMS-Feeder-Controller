@@ -4,6 +4,7 @@ import {
   AggregatedMetricsResponse,
   FeederHistoryResponse,
   FeederSummary,
+  HealthResponse,
   MetricsWindow,
   SimulationMode,
   SimulationModeResponse,
@@ -26,6 +27,15 @@ export interface TelemetryInput {
 const BASE_URL =
   import.meta.env.VITE_API_URL ||
   `${window.location.protocol}//${window.location.hostname}:3001`;
+
+
+export async function fetchHealth(): Promise<HealthResponse> {
+  const res = await fetch(`${BASE_URL}/api/health`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch health status');
+  }
+  return res.json();
+}
 
 
 // Fetch feeder summary from the backend.

@@ -20,6 +20,45 @@ export const openApiSpec = {
                   type: 'object',
                   properties: {
                     status: { type: 'string', example: 'ok' },
+                    db: {
+                      type: 'object',
+                      properties: { ok: { type: 'boolean' } },
+                    },
+                    mqtt: {
+                      type: 'object',
+                      properties: {
+                        host: { type: 'string' },
+                        port: { type: 'number' },
+                        connected: { type: 'boolean' },
+                        lastError: { type: 'string', nullable: true },
+                      },
+                    },
+                    controlLoop: {
+                      type: 'object',
+                      properties: {
+                        status: { type: 'string', example: 'ok' },
+                        lastIterationIso: {
+                          type: 'string',
+                          nullable: true,
+                          format: 'date-time',
+                        },
+                        lastDurationMs: { type: 'number', nullable: true },
+                        lastError: { type: 'string', nullable: true },
+                        offlineCount: { type: 'number' },
+                        offlineDevices: {
+                          type: 'array',
+                          items: {
+                            type: 'object',
+                            properties: {
+                              deviceId: { type: 'string' },
+                              lastHeartbeat: { type: 'string', format: 'date-time', nullable: true },
+                            },
+                          },
+                        },
+                        heartbeatTimeoutSeconds: { type: 'number' },
+                        stallThresholdSeconds: { type: 'number' },
+                      },
+                    },
                   },
                 },
               },

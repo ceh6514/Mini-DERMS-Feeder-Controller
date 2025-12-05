@@ -2,6 +2,7 @@ import mqtt, { MqttClient } from 'mqtt';
 import config from './config';
 import { upsertDevice } from './repositories/devicesRepo';
 import { insertTelemetry } from './repositories/telemetryRepo';
+import { recordHeartbeat } from './state/controlLoopMonitor';
 
 export let mqttClient: MqttClient | null = null;
 let lastError: string | null = null;
@@ -56,6 +57,8 @@ async function parseAndStoreMessage(topic: string, payload: Buffer) {
       pMaxKw,
       priority,
     });
+
+    recordHeartbeat(id, ts.getTime());
 
     //Insert telemetry row (after the device row exists)
     await insertTelemetry({

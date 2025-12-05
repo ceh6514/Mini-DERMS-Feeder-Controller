@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchDevices,
   fetchFeederHistory,
   fetchFeederSummary,
+  fetchHealth,
   fetchSimulationMode,
   resetSimulationMode,
   setSimulationMode,
@@ -12,6 +13,7 @@ import {
   FeederHistoryResponse,
   FeederSummary,
   AggregatedMetricsResponse,
+  HealthResponse,
   SimulationMode,
 } from '../api/types';
 import DeviceTable from '../components/DeviceTable';
@@ -34,19 +36,43 @@ const Dashboard = () => {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [analyticsMetrics, setAnalyticsMetrics] =
     useState<AggregatedMetricsResponse | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
   const [simulationMode, setSimulationModeState] = useState<SimulationMode>('day');
   const [modeSource, setModeSource] = useState<'auto' | 'manual'>('auto');
   const [modeMessage, setModeMessage] = useState<string | null>(null);
   const [modeUpdating, setModeUpdating] = useState(false);
 
+  const offlineDeviceIds = useMemo(
+    () =>
+      new Set((health?.controlLoop.offlineDevices ?? []).map((device) => device.deviceId)),
+    [health],
+  );
+
+  const formatRelativeTime = useCallback((iso: string | null | undefined) => {
+    if (!iso) return 'unknown';
+    const date = new Date(iso);
+    const diffMs = Date.now() - date.getTime();
+    if (!Number.isFinite(diffMs)) return 'unknown';
+
+    const minutes = Math.floor(diffMs / 60000);
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  }, []);
+
   const refreshSummaryAndDevices = useCallback(async () => {
     try {
-      const [summaryResponse, devicesResponse] = await Promise.all([
+      const [summaryResponse, devicesResponse, healthResponse] = await Promise.all([
         fetchFeederSummary(),
         fetchDevices(),
+        fetchHealth(),
       ]);
       setSummary(summaryResponse);
       setDevices(devicesResponse);
+      setHealth(healthResponse);
     } catch (refreshError) {
       console.error('Failed to refresh devices and summary', refreshError);
     }
@@ -64,11 +90,12 @@ const Dashboard = () => {
       try {
         setHistoryLoading(true);
 
-        const [summaryResponse, devicesResponse, historyResponse, simModeResponse] = await Promise.all([
+        const [summaryResponse, devicesResponse, historyResponse, simModeResponse, healthResponse] = await Promise.all([
           fetchFeederSummary(),
           fetchDevices(),
           fetchFeederHistory(30),
           fetchSimulationMode(),
+          fetchHealth(),
         ]);
 
         if (!isMounted) return;
@@ -76,6 +103,7 @@ const Dashboard = () => {
         setSummary(summaryResponse);
         setDevices(devicesResponse);
         setHistory(historyResponse);
+        setHealth(healthResponse);
         setSimulationModeState(simModeResponse.mode);
         setModeSource(simModeResponse.source);
         setError(null);
@@ -108,6 +136,16 @@ const Dashboard = () => {
       }
     };
   }, []);
+
+  const offlineCount = health?.controlLoop.offlineCount ?? 0;
+  const offlineDevices = health?.controlLoop.offlineDevices ?? [];
+  const lastLoopRun = health?.controlLoop.lastIterationIso
+    ? formatRelativeTime(health.controlLoop.lastIterationIso)
+    : 'pending';
+  const loopStatus = health?.controlLoop.status ?? 'idle';
+  const loopIsStalled = loopStatus === 'stalled';
+  const loopErrored = loopStatus === 'error';
+  const loopStatusLabel = loopStatus === 'ok' ? 'healthy' : loopStatus;
 
   return (
     <div className="dashboard-shell">
@@ -179,12 +217,41 @@ const Dashboard = () => {
             )}
           </div>
           {summary && (
-            <span className="badge">
-              {summary.deviceCount} device{summary.deviceCount === 1 ? '' : 's'} online
-            </span>
+            <div className="badge-row">
+              <span className="badge">
+                {Math.max(summary.deviceCount - offlineCount, 0)} of {summary.deviceCount} devices online
+              </span>
+              {offlineCount > 0 && (
+                <span className="badge danger">{offlineCount} offline</span>
+              )}
+              <span className={`pill ${loopIsStalled || loopErrored ? 'alert-text' : 'muted'}`}>
+                Loop {loopStatusLabel} • Last run {lastLoopRun}
+              </span>
+            </div>
           )}
         </header>
       </div>
+
+      {(loopIsStalled || loopErrored) && (
+        <div className="alert error">
+          <strong>Control loop {loopStatusLabel}.</strong>{' '}
+          Last iteration {lastLoopRun}.
+        </div>
+      )}
+
+      {offlineCount > 0 && (
+        <div className="alert warning">
+          <strong>{offlineCount} device{offlineCount === 1 ? '' : 's'} offline.</strong>
+          <div className="alert-list">
+            {offlineDevices.slice(0, 4).map((device) => (
+              <span key={device.deviceId}>
+                {device.deviceId} • Last heartbeat {formatRelativeTime(device.lastHeartbeat)}
+              </span>
+            ))}
+            {offlineCount > 4 && <span>+{offlineCount - 4} more</span>}
+          </div>
+        </div>
+      )}
 
       {modeMessage && <div className="notice">{modeMessage}</div>}
 
@@ -211,7 +278,7 @@ const Dashboard = () => {
           </div>
           <div className="table-wrapper card">
             <h2>Devices</h2>
-            <DeviceTable devices={devices} />
+            <DeviceTable devices={devices} offlineDeviceIds={offlineDeviceIds} />
           </div>
         </>
       )}
