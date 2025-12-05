@@ -50,6 +50,48 @@ export interface FeederHistoryResponse {
   points: FeederHistoryPoint[];
 }
 
+export type MetricsWindow = 'day' | 'week' | 'month';
+
+export interface HeadroomPoint {
+  ts: string;
+  totalKw: number;
+  limitKw: number;
+  utilizationPct: number;
+  curtailmentPct: number;
+  fairnessScore: number;
+}
+
+export interface DeviceAggregate {
+  deviceId: string;
+  deviceType: string;
+  avgKw: number;
+  maxKw: number;
+  percentCurtailment: number;
+  minSoc: number | null;
+}
+
+export interface SocTrajectoryPoint {
+  ts: string;
+  deviceId: string;
+  soc: number;
+}
+
+export interface AggregatedMetricsResponse {
+  window: MetricsWindow;
+  rangeStart: string;
+  rangeEnd: string;
+  feeder: {
+    avgKw: number;
+    maxKw: number;
+    percentCurtailment: number;
+    slaViolations: number;
+    fairnessScore: number;
+  };
+  headroom: HeadroomPoint[];
+  devices: DeviceAggregate[];
+  socTrajectories: SocTrajectoryPoint[];
+}
+
 export type SimulationMode = 'day' | 'night';
 
 export interface SimulationModeResponse {
