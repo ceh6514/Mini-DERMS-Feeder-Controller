@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getCurrentFeederLimit } from '../repositories/eventsRepo';
 import {
+  getAggregatedMetrics,
   getFeederHistory,
   getLatestTelemetryPerDevice,
 } from '../repositories/telemetryRepo';
@@ -110,6 +111,37 @@ router.get('/history', async (req, res) => {
   } catch (err) {
     console.error('[feeder history] error', err);
     res.status(500).json({ error: 'Failed to load feeder history' });
+  }
+});
+
+/**
+ * GET /api/feeder/metrics?window=day&bucketMinutes=60
+ *
+ * Returns aggregated metrics for the feeder and devices across the selected window.
+ */
+router.get('/metrics', async (req, res) => {
+  try {
+    const windowParam = (req.query.window as string) || 'day';
+    const bucketMinutesRaw = req.query.bucketMinutes;
+    const bucketMinutes =
+      bucketMinutesRaw !== undefined && bucketMinutesRaw !== null
+        ? Number(bucketMinutesRaw)
+        : undefined;
+
+    if (!['day', 'week', 'month'].includes(windowParam)) {
+      return res.status(400).json({ error: 'window must be one of day, week, or month' });
+    }
+
+    if (bucketMinutesRaw !== undefined && Number.isNaN(bucketMinutes)) {
+      return res.status(400).json({ error: 'bucketMinutes must be a number when provided' });
+    }
+
+    const metrics = await getAggregatedMetrics(windowParam as 'day' | 'week' | 'month', bucketMinutes);
+
+    return res.json(metrics);
+  } catch (err) {
+    console.error('[feeder metrics] error', err);
+    res.status(500).json({ error: 'Failed to load aggregated metrics' });
   }
 });
 

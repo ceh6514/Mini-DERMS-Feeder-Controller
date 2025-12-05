@@ -11,6 +11,7 @@ import {
   DeviceWithLatest,
   FeederHistoryResponse,
   FeederSummary,
+  AggregatedMetricsResponse,
   SimulationMode,
 } from '../api/types';
 import DeviceTable from '../components/DeviceTable';
@@ -19,6 +20,7 @@ import FeederSummaryCard from '../components/FeederSummary';
 import DrEventForm from '../components/DrEventForm';
 import FeederHistoryChart from '../components/FeederHistoryChart';
 import TelemetryControlPanel from '../components/TelemetryControlPanel';
+import AnalyticsPanel from '../components/AnalyticsPanel';
 
 const POLL_INTERVAL_MS = 8000; // Refresh data roughly every 8 seconds.
 
@@ -30,6 +32,8 @@ const Dashboard = () => {
   const [history, setHistory] = useState<FeederHistoryResponse | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [analyticsMetrics, setAnalyticsMetrics] =
+    useState<AggregatedMetricsResponse | null>(null);
   const [simulationMode, setSimulationModeState] = useState<SimulationMode>('day');
   const [modeSource, setModeSource] = useState<'auto' | 'manual'>('auto');
   const [modeMessage, setModeMessage] = useState<string | null>(null);
@@ -190,7 +194,7 @@ const Dashboard = () => {
       {!loading && !error && (
         <>
           <div className="grid" style={{ marginTop: '1rem' }}>
-            <FeederSummaryCard summary={summary} />
+            <FeederSummaryCard summary={summary} metrics={analyticsMetrics} />
             <FeederChart summary={summary} />
             <DrEventForm
               onCreated={async () => {
@@ -201,6 +205,9 @@ const Dashboard = () => {
           </div>
           <div className="grid" style={{ marginTop: '1rem' }}>
             <FeederHistoryChart data={history} loading={historyLoading} error={historyError} />
+          </div>
+          <div className="grid" style={{ marginTop: '1rem' }}>
+            <AnalyticsPanel onMetricsLoaded={setAnalyticsMetrics} />
           </div>
           <div className="table-wrapper card">
             <h2>Devices</h2>

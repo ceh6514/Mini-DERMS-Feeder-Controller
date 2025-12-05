@@ -1,8 +1,10 @@
 import {
   DeviceWithLatest,
   DrEvent,
+  AggregatedMetricsResponse,
   FeederHistoryResponse,
   FeederSummary,
+  MetricsWindow,
   SimulationMode,
   SimulationModeResponse,
 } from './types';
@@ -125,4 +127,22 @@ export async function sendTelemetry(input: TelemetryInput): Promise<void> {
     const text = await res.text();
     throw new Error(`Failed to send telemetry: ${text}`);
   }
+}
+
+export async function fetchAggregatedMetrics(
+  window: MetricsWindow,
+  bucketMinutes?: number,
+): Promise<AggregatedMetricsResponse> {
+  const params = new URLSearchParams({ window });
+  if (bucketMinutes) {
+    params.set('bucketMinutes', String(bucketMinutes));
+  }
+
+  const res = await fetch(`${BASE_URL}/api/feeder/metrics?${params.toString()}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to fetch aggregated metrics: ${text}`);
+  }
+
+  return (await res.json()) as AggregatedMetricsResponse;
 }
