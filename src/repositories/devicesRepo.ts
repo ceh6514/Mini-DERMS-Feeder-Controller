@@ -8,6 +8,17 @@ export interface Device {
   priority?: number | null;
 }
 
+export async function getDeviceById(id: string): Promise<Device | null> {
+  const text = `
+    SELECT id, type, site_id AS "siteId", p_max_kw AS "pMaxKw", priority
+    FROM devices
+    WHERE id = $1
+    LIMIT 1;
+  `;
+  const { rows } = await query<Device>(text, [id]);
+  return rows[0] ?? null;
+}
+
 export async function upsertDevice(device: Device): Promise<void> {
   const text = `
     INSERT INTO devices (id, type, site_id, p_max_kw, priority)

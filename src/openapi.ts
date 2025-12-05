@@ -155,6 +155,49 @@ export const openApiSpec = {
         },
       },
     },
+    '/api/telemetry': {
+      post: {
+        summary: 'Submit a telemetry point for a device',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  device_id: { type: 'string' },
+                  ts: { type: 'string', format: 'date-time' },
+                  p_actual_kw: { type: 'number' },
+                  p_setpoint_kw: { type: 'number', nullable: true },
+                  soc: { type: 'number', nullable: true },
+                  site_id: { type: 'string' },
+                },
+                required: [
+                  'device_id',
+                  'ts',
+                  'p_actual_kw',
+                  'site_id',
+                ],
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Telemetry stored',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { status: { type: 'string', example: 'ok' } },
+                },
+              },
+            },
+          },
+          400: { description: 'Validation error' },
+        },
+      },
+    },
     '/api/events': {
       post: {
         summary: 'Create a feeder event (e.g., curtailment)',

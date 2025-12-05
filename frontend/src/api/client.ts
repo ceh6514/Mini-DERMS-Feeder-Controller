@@ -12,6 +12,15 @@ export interface CreateDrEventInput {
   durationMinutes: number;
 }
 
+export interface TelemetryInput {
+  deviceId: string;
+  ts: string;
+  pActualKw: number;
+  pSetpointKw?: number;
+  soc?: number;
+  siteId: string;
+}
+
 const BASE_URL =
   import.meta.env.VITE_API_URL ||
   `${window.location.protocol}//${window.location.hostname}:3001`;
@@ -96,4 +105,24 @@ export async function resetSimulationMode(): Promise<SimulationModeResponse> {
     throw new Error(`Failed to reset simulation mode: ${text}`);
   }
   return (await res.json()) as SimulationModeResponse;
+}
+
+export async function sendTelemetry(input: TelemetryInput): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/telemetry`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      device_id: input.deviceId,
+      ts: input.ts,
+      p_actual_kw: input.pActualKw,
+      p_setpoint_kw: input.pSetpointKw ?? null,
+      soc: input.soc ?? null,
+      site_id: input.siteId,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to send telemetry: ${text}`);
+  }
 }
