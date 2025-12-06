@@ -6,6 +6,7 @@ import {
 } from '../repositories/telemetryRepo';
 import { getAllDevices, Device } from '../repositories/devicesRepo';
 import { mqttClient } from '../mqttClient';
+import { DrProgramRow, getActiveDrProgram } from '../repositories/drProgramsRepo';
 import {
   getOfflineDeviceIds,
   markIterationError,
@@ -15,6 +16,7 @@ import {
   shouldAlertStall,
 } from '../state/controlLoopMonitor';
 import { notifyOfflineDevices, notifyStalledLoop } from '../alerting';
+import { recordDrImpact } from '../state/drImpact';
 
 // Track the most recent setpoint we have commanded for each device.
 export const deviceSetpoints = new Map<string, number>();
@@ -145,6 +147,62 @@ export function computeAllowedShares(
   return allowed;
 }
 
+function applyDrPolicy(
+  program: DrProgramRow | null,
+  availableForEv: number,
+  evDevices: DeviceWithTelemetry[],
+): {
+  adjustedAvailable: number;
+  shedApplied: number;
+  elasticity: number;
+} {
+  if (!program || availableForEv <= 0) {
+    return { adjustedAvailable: availableForEv, shedApplied: 0, elasticity: 1 };
+  }
+
+  const targetShed = Math.max(program.target_shed_kw ?? 0, 0);
+  const totalEvCapacity = evDevices.reduce((sum, ev) => sum + ev.pMax, 0);
+
+  if (program.mode === 'fixed_cap') {
+    const shedApplied = Math.min(targetShed, availableForEv);
+    const adjustedAvailable = Math.max(availableForEv - shedApplied, 0);
+    const elasticity = availableForEv > 0 ? adjustedAvailable / availableForEv : 1;
+    return { adjustedAvailable, shedApplied, elasticity };
+  }
+
+  const incentive = Math.max(program.incentive_per_kwh ?? 0, 0);
+  const penalty = Math.max(program.penalty_per_kwh ?? 0, 0);
+  const netPressure = penalty - incentive;
+
+  if (netPressure > 0) {
+    const elasticityFactor = Math.max(0, 1 - Math.min(0.8, netPressure / 100));
+    const shedFromPrice = availableForEv * (1 - elasticityFactor);
+    const shedFromTarget = targetShed > 0 ? Math.min(targetShed, availableForEv) : 0;
+    const shedApplied = Math.max(shedFromPrice, shedFromTarget);
+    const adjustedAvailable = Math.max(availableForEv - shedApplied, 0);
+    return {
+      adjustedAvailable,
+      shedApplied,
+      elasticity: availableForEv > 0 ? adjustedAvailable / availableForEv : 1,
+    };
+  }
+
+  if (netPressure < 0) {
+    const boostFactor = Math.min(0.5, Math.abs(netPressure) / 100);
+    const desiredBoost = (targetShed > 0 ? targetShed : availableForEv) * boostFactor;
+    const headroom = Math.max(totalEvCapacity - availableForEv, 0);
+    const boostApplied = Math.min(headroom, desiredBoost);
+    const adjustedAvailable = availableForEv + boostApplied;
+    return {
+      adjustedAvailable,
+      shedApplied: -boostApplied,
+      elasticity: availableForEv > 0 ? adjustedAvailable / availableForEv : 1,
+    };
+  }
+
+  return { adjustedAvailable: availableForEv, shedApplied: 0, elasticity: 1 };
+}
+
 function publishCommands(
   commands: { deviceId: string; newSetpoint: number; prevSetpoint: number }[],
   logContext: string
@@ -223,20 +281,63 @@ export function startControlLoop() {
       const totalEvKw = evDevices.reduce((sum, ev) => sum + ev.pActual, 0);
       const nonEvKw = totalKw - totalEvKw;
       const availableForEv = Math.max(limitKw - nonEvKw, 0);
+      const activeProgram = await getActiveDrProgram(now);
+      const { adjustedAvailable, shedApplied, elasticity } = applyDrPolicy(
+        activeProgram,
+        availableForEv,
+        evDevices,
+      );
+      const effectiveAvailableForEv = adjustedAvailable;
 
       if (evDevices.length === 0) {
         console.log('[controlLoop] no EV devices found, skipping control');
         return;
       }
 
-      const overloaded = availableForEv < totalEvKw - marginKw;
-      const hasHeadroom = availableForEv > totalEvKw + marginKw;
+      const overloaded = effectiveAvailableForEv < totalEvKw - marginKw;
+      const hasHeadroom = effectiveAvailableForEv > totalEvKw + marginKw;
+
+      const allowedShares = computeAllowedShares(evDevices, effectiveAvailableForEv);
+      const perDeviceImpact = evDevices.map((ev) => {
+        const allowed = allowedShares.get(ev.device.id) ?? ev.currentSetpoint;
+        const utilization = ev.pMax > 0 ? Math.min(Math.max(allowed / ev.pMax, 0), 1) : 0;
+        const priority = priorityLookup.get(ev.device.id) ?? ev.priority ?? 1;
+        return {
+          deviceId: ev.device.id,
+          allowedKw: allowed,
+          pMax: ev.pMax,
+          utilizationPct: utilization * 100,
+          priority,
+        };
+      });
+
+      const avgUtilizationPct =
+        perDeviceImpact.reduce((sum, d) => sum + d.utilizationPct, 0) /
+        (perDeviceImpact.length || 1);
+      const totalPriority = perDeviceImpact.reduce((sum, d) => sum + d.priority, 0) || 1;
+      const priorityWeightedUtilizationPct =
+        perDeviceImpact.reduce((sum, d) => sum + d.utilizationPct * d.priority, 0) /
+        totalPriority;
+
+      recordDrImpact({
+        timestampIso: now.toISOString(),
+        availableBeforeKw: availableForEv,
+        availableAfterKw: effectiveAvailableForEv,
+        shedAppliedKw: shedApplied,
+        elasticityFactor: elasticity,
+        totalEvKw,
+        nonEvKw,
+        avgUtilizationPct,
+        priorityWeightedUtilizationPct,
+        activeProgram,
+        perDevice: perDeviceImpact,
+      });
+
       if (!overloaded && !hasHeadroom) {
         console.log('[controlLoop] within margin, no changes');
         return;
       }
 
-      const allowedShares = computeAllowedShares(evDevices, availableForEv);
       const commands: { deviceId: string; newSetpoint: number; prevSetpoint: number }[] = [];
       const deviceLogs: {
         id: string;
@@ -309,6 +410,18 @@ export function startControlLoop() {
           limitKw.toFixed(2),
           'nonEv',
           nonEvKw.toFixed(2),
+          'availableEv',
+          availableForEv.toFixed(2),
+          'effectiveEv',
+          effectiveAvailableForEv.toFixed(2),
+          'dr',
+          activeProgram
+            ? {
+                mode: activeProgram.mode,
+                shed: shedApplied.toFixed(2),
+                elasticity: elasticity.toFixed(2),
+              }
+            : 'none',
           'ev commands',
           commandSummaries,
           'ev deficits',
@@ -316,7 +429,7 @@ export function startControlLoop() {
         );
         publishCommands(
           commands,
-          `total=${totalKw.toFixed(2)} limit=${limitKw.toFixed(2)} availableForEv=${availableForEv.toFixed(2)}`
+          `total=${totalKw.toFixed(2)} limit=${limitKw.toFixed(2)} availableForEv=${availableForEv.toFixed(2)} effective=${effectiveAvailableForEv.toFixed(2)}`
         );
       } else {
         const deficitSummaries = deviceLogs.map((log) => ({

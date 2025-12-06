@@ -40,6 +40,42 @@ export interface DrEvent {
   type: string;
 }
 
+export type DrProgramMode = 'fixed_cap' | 'price_elastic';
+
+export interface DrProgram {
+  id: number;
+  name: string;
+  mode: DrProgramMode;
+  ts_start: string;
+  ts_end: string;
+  target_shed_kw: number | null;
+  incentive_per_kwh: number | null;
+  penalty_per_kwh: number | null;
+  is_active: boolean;
+}
+
+export interface DrImpactDevice {
+  deviceId: string;
+  allowedKw: number;
+  pMax: number;
+  utilizationPct: number;
+  priority: number;
+}
+
+export interface DrImpactSnapshot {
+  timestampIso: string;
+  availableBeforeKw: number;
+  availableAfterKw: number;
+  shedAppliedKw: number;
+  elasticityFactor: number;
+  totalEvKw: number;
+  nonEvKw: number;
+  avgUtilizationPct: number;
+  priorityWeightedUtilizationPct: number;
+  activeProgram: DrProgram | null;
+  perDevice: DrImpactDevice[];
+}
+
 export interface FeederHistoryPoint {
   ts: string; // ISO string
   totalKw: number;
