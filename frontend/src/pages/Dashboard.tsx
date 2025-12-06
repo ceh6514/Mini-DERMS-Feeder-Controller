@@ -23,6 +23,7 @@ import DrEventForm from '../components/DrEventForm';
 import FeederHistoryChart from '../components/FeederHistoryChart';
 import TelemetryControlPanel from '../components/TelemetryControlPanel';
 import AnalyticsPanel from '../components/AnalyticsPanel';
+import DrProgramPanel from '../components/DrProgramPanel';
 
 const POLL_INTERVAL_MS = 8000; // Refresh data roughly every 8 seconds.
 
@@ -274,6 +275,7 @@ const Dashboard = () => {
             <FeederHistoryChart data={history} loading={historyLoading} error={historyError} />
           </div>
           <div className="grid" style={{ marginTop: '1rem' }}>
+            <DrProgramPanel />
             <AnalyticsPanel onMetricsLoaded={setAnalyticsMetrics} />
           </div>
           <div className="table-wrapper card">

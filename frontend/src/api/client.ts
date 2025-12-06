@@ -5,6 +5,8 @@ import {
   FeederHistoryResponse,
   FeederSummary,
   HealthResponse,
+  DrProgram,
+  DrImpactSnapshot,
   MetricsWindow,
   SimulationMode,
   SimulationModeResponse,
@@ -78,6 +80,78 @@ export async function createDrEvent(input: CreateDrEventInput): Promise<DrEvent>
   }
 
   return (await res.json()) as DrEvent;
+}
+
+export async function fetchDrPrograms(): Promise<DrProgram[]> {
+  const res = await fetch(`${BASE_URL}/api/dr-programs`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch DR programs');
+  }
+  return (await res.json()) as DrProgram[];
+}
+
+export interface DrProgramInput {
+  name: string;
+  mode: 'fixed_cap' | 'price_elastic';
+  tsStart: string;
+  tsEnd: string;
+  targetShedKw?: number;
+  incentivePerKwh?: number;
+  penaltyPerKwh?: number;
+  isActive?: boolean;
+}
+
+export async function createDrProgram(input: DrProgramInput): Promise<DrProgram> {
+  const res = await fetch(`${BASE_URL}/api/dr-programs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to create DR program: ${text}`);
+  }
+  return (await res.json()) as DrProgram;
+}
+
+export async function updateDrProgram(id: number, input: Partial<DrProgramInput>): Promise<DrProgram> {
+  const res = await fetch(`${BASE_URL}/api/dr-programs/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to update DR program: ${text}`);
+  }
+  return (await res.json()) as DrProgram;
+}
+
+export async function deleteDrProgram(id: number): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/dr-programs/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) {
+    const text = await res.text();
+    throw new Error(`Failed to delete DR program: ${text}`);
+  }
+}
+
+export async function activateDrProgram(id: number): Promise<DrProgram> {
+  const res = await fetch(`${BASE_URL}/api/dr-programs/${id}/activate`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to activate DR program: ${text}`);
+  }
+  return (await res.json()) as DrProgram;
+}
+
+export async function fetchActiveDrProgramImpact(): Promise<{ program: DrProgram | null; impact: DrImpactSnapshot | null }> {
+  const res = await fetch(`${BASE_URL}/api/dr-programs/active`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch active DR program');
+  }
+  return (await res.json()) as { program: DrProgram | null; impact: DrImpactSnapshot | null };
 }
 
 export async function fetchFeederHistory(minutes = 30): Promise<FeederHistoryResponse> {
