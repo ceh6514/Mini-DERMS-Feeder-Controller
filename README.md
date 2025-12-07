@@ -76,5 +76,8 @@ To connect a physical Pi-based device, use the provided MQTT agent:
 
 The agent subscribes to `der/control/<deviceId>` for setpoints and publishes telemetry to `der/telemetry/<deviceId>`. Ensure `broker_host` resolves to the MQTT broker used by the feeder controller so control messages reach the device.
 
+### How control works
+The feeder controller uses a weighted allocator in [`src/controllers/controlLoop.ts`](src/controllers/controlLoop.ts). Each device weight multiplies its priority with its SOC gap from reserve, accumulating a per-tick deficit bucket. At each control cycle, deficits are sorted and filled first to satisfy the most under-served devices, and any remaining feeder headroom is spread proportionally by weight.
+
 ## Data lifecycle
 On startup, the service initializes the `devices`, `telemetry`, `events`, and `dr_programs` tables (see `src/db.ts`). The control loop and MQTT ingest operate continuously once the server is running.
