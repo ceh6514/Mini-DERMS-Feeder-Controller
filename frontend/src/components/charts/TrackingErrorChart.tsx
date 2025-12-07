@@ -19,11 +19,11 @@ const TrackingErrorChart: React.FC<Props> = ({ metrics }) => {
           return (
             <div key={metric.deviceId} style={{ display: 'grid', gridTemplateColumns: '120px 1fr 60px', gap: '0.35rem', alignItems: 'center' }}>
               <span>{metric.deviceId}</span>
-              <div style={{ background: 'var(--border)', borderRadius: 8, overflow: 'hidden', height: 10 }}>
+              <div style={{ background: 'var(--color-surface-muted)', borderRadius: 8, overflow: 'hidden', height: 10 }}>
                 <div
                   style={{
                     width: `${pct}%`,
-                    background: metric.isPhysical ? '#3b82f6' : 'var(--accent-strong)',
+                    background: metric.isPhysical ? 'var(--color-positive)' : 'var(--color-accent-strong)',
                     height: '100%',
                     transition: 'width 0.3s ease',
                   }}

@@ -91,12 +91,12 @@ const HeadroomChart = ({ title, subtitle, points, yAccessor, yLabel, yMax }: Cha
           y1={yScale(minValue)}
           x2={CHART_WIDTH - PADDING.right}
           y2={yScale(minValue)}
-          stroke="var(--border-subtle)"
+          stroke="var(--color-border)"
         />
         <path
           d={path}
           fill="none"
-          stroke="var(--accent-strong)"
+          stroke="var(--color-accent-strong)"
           strokeWidth={3}
           strokeLinecap="round"
         />
@@ -156,14 +156,14 @@ const SocTrajectoryChart = ({ trajectories }: MultiLineProps) => {
           y1={yScale(0)}
           x2={CHART_WIDTH - PADDING.right}
           y2={yScale(0)}
-          stroke="var(--border-subtle)"
+          stroke="var(--color-border)"
         />
         <line
           x1={PADDING.left}
           y1={yScale(1)}
           x2={CHART_WIDTH - PADDING.right}
           y2={yScale(1)}
-          stroke="var(--border-subtle)"
+          stroke="var(--color-border)"
         />
         {sortedKeys.map((deviceId, idx) => {
           const color = palette[idx % palette.length];

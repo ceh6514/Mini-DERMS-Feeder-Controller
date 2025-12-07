@@ -1,5 +1,6 @@
 import React from 'react';
 import { FeederSummary, HealthResponse } from '../../api/types';
+import LineIcon from '../icons/LineIcon';
 
 interface TopBarProps {
   summary: FeederSummary | null;
@@ -15,10 +16,11 @@ const TopBar: React.FC<TopBarProps> = ({ summary, health, theme }) => {
   return (
     <div className="topbar">
       <div className="title">
-        <h2>Feeder Controller</h2>
+        <h2>Mini-DERMS Feeder Controller</h2>
         <div className="badge-row">
           <span className="pill">
-            {theme === 'day' ? '☀️ Day profile' : '🌙 Night profile'}
+            <LineIcon name={theme === 'day' ? 'sun' : 'moon'} size={16} />
+            {theme === 'day' ? 'Day profile' : 'Night profile'}
           </span>
           {summary && (
             <span className="pill">

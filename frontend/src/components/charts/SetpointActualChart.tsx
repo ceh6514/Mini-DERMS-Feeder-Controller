@@ -60,21 +60,21 @@ const SetpointActualChart: React.FC<Props> = ({ deviceId, telemetry }) => {
       <svg width="100%" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Setpoint vs actual">
         <defs>
           <linearGradient id="actualFill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.25" />
-            <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.05" />
+            <stop offset="0%" stopColor="var(--color-accent)" stopOpacity="0.25" />
+            <stop offset="100%" stopColor="var(--color-accent)" stopOpacity="0.05" />
           </linearGradient>
         </defs>
         {setpointPath && (
-          <path d={setpointPath} fill="none" stroke="var(--muted)" strokeWidth={2} strokeDasharray="6 6" />
+          <path d={setpointPath} fill="none" stroke="var(--color-text-muted)" strokeWidth={2} strokeDasharray="6 6" />
         )}
-        {actualPath && <path d={actualPath} fill="none" stroke="var(--accent-strong)" strokeWidth={3} />}
+        {actualPath && <path d={actualPath} fill="none" stroke="var(--color-accent-strong)" strokeWidth={3} />}
         {areaPath && <path d={areaPath} fill="url(#actualFill)" opacity={0.4} />}
         <line
           x1={padding.left}
           y1={scaleY(0)}
           x2={width - padding.right}
           y2={scaleY(0)}
-          stroke="var(--border)"
+          stroke="var(--color-border)"
         />
       </svg>
     </div>

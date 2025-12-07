@@ -1,0 +1,83 @@
+@import url('https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600&family=Barlow+Condensed:wght@600&display=swap');
+
+:root {
+  /* Typography */
+  --font-body: 'Public Sans', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: 'Barlow Condensed', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-weight-regular: 400;
+  --font-weight-strong: 600;
+  --type-xs: 0.75rem;
+  --type-sm: 0.9rem;
+  --type-md: 1rem;
+  --type-lg: 1.2rem;
+  --type-xl: 1.6rem;
+  --type-xxl: 2rem;
+
+  /* Spacing scale */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  /* Radius */
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+
+  /* Motion */
+  --motion-fast: 120ms;
+  --motion-base: 220ms;
+  --motion-slow: 420ms;
+  --ease-standard: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-emphasis: cubic-bezier(0.18, 0.89, 0.32, 1.28);
+
+  /* Shadows */
+  --shadow-soft: 0 12px 35px rgba(7, 24, 29, 0.12);
+  --shadow-strong: 0 24px 65px rgba(5, 16, 21, 0.18);
+
+  /* Day palette */
+  --color-base: #0f1d1f; /* charcoal */
+  --color-surface: #f7f8f6;
+  --color-surface-strong: #ffffff;
+  --color-surface-muted: #e9ede8;
+  --color-border: rgba(15, 29, 31, 0.1);
+  --color-text: #1d2c2f;
+  --color-text-muted: #5c6b6f;
+  --color-text-strong: #0c191c;
+  --color-accent: #2f7a6b; /* desaturated teal */
+  --color-accent-strong: #1f6759;
+  --color-accent-soft: rgba(47, 122, 107, 0.18);
+  --color-positive: #d6b47c; /* warm sand */
+  --color-warning: #d28a3c; /* amber */
+  --color-danger: #c05d72; /* rose */
+  --color-gradient: linear-gradient(135deg, #f1f7f4 0%, #eef4f6 45%, #f7f3eb 100%);
+  --color-hero: radial-gradient(circle at 20% 10%, rgba(47, 122, 107, 0.12), transparent 45%),
+    radial-gradient(circle at 80% 20%, rgba(214, 180, 124, 0.14), transparent 42%),
+    linear-gradient(140deg, #f6f8f7 0%, #eef3f2 100%);
+  --glow-accent: 0 10px 35px rgba(47, 122, 107, 0.35);
+}
+
+body[data-theme='night'] {
+  --color-base: #050c12;
+  --color-surface: #0f161b;
+  --color-surface-strong: #121c23;
+  --color-surface-muted: #0b1318;
+  --color-border: rgba(255, 255, 255, 0.06);
+  --color-text: #d6e6ea;
+  --color-text-muted: #93a6ac;
+  --color-text-strong: #e9f4f5;
+  --color-accent: #5bc8af;
+  --color-accent-strong: #3fa289;
+  --color-accent-soft: rgba(91, 200, 175, 0.18);
+  --color-positive: #dcbc8a;
+  --color-warning: #f2b155;
+  --color-danger: #f291a8;
+  --color-gradient: radial-gradient(circle at 20% 20%, #0c1620 0%, #081017 60%, #050b11 100%);
+  --color-hero: radial-gradient(circle at 18% 24%, rgba(91, 200, 175, 0.12), transparent 42%),
+    radial-gradient(circle at 70% 10%, rgba(242, 177, 85, 0.12), transparent 44%),
+    linear-gradient(160deg, #0b1218 0%, #060b11 100%);
+  --glow-accent: 0 10px 40px rgba(91, 200, 175, 0.35);
+}
