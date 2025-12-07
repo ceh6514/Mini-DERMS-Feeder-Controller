@@ -54,6 +54,27 @@ describe('controlLoop helpers', () => {
     assert.strictEqual(getCurrentSetpoint('ev-1', telemetry), 12);
   });
 
+  it('falls back to p_actual_kw when telemetry setpoint is missing', () => {
+    deviceSetpoints.clear();
+
+    const telemetryRows: TelemetryRow[] = [
+      {
+        ...baseTelemetry,
+        p_actual_kw: 4,
+      },
+      {
+        ...baseTelemetry,
+        device_id: 'ev-2',
+        p_actual_kw: 3,
+        p_setpoint_kw: null,
+      },
+    ];
+
+    for (const telemetry of telemetryRows) {
+      assert.strictEqual(getCurrentSetpoint(telemetry.device_id, telemetry), telemetry.p_actual_kw);
+    }
+  });
+
   it('prepares EV devices with sensible fallbacks', () => {
     const telemetryRows: TelemetryRow[] = [
       {
