@@ -6,10 +6,12 @@ interface SidebarProps {
 }
 
 const nav = [
-  { key: 'overview', label: 'Overview' },
+  { key: 'hero', label: 'Overview' },
+  { key: 'generation', label: 'Generation' },
+  { key: 'consumption', label: 'Consumption' },
+  { key: 'grid', label: 'Grid health' },
+  { key: 'forecast', label: 'Forecast' },
   { key: 'devices', label: 'Devices' },
-  { key: 'sites', label: 'Sites' },
-  { key: 'metrics', label: 'Metrics' },
   { key: 'settings', label: 'Settings' },
 ];
 
@@ -29,7 +31,7 @@ const Sidebar: React.FC<SidebarProps> = ({ active, onChange }) => {
               className={`nav-button ${active === item.key ? 'active' : ''}`}
               onClick={() => onChange(item.key)}
             >
-              <span aria-hidden>•</span> {item.label}
+              <span aria-hidden className="nav-kicker">{item.label}</span>
             </button>
           ))}
         </div>

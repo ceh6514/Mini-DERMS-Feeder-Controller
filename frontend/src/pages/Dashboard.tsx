@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import LayoutShell from '../components/layout/LayoutShell';
-import SummaryCards from '../components/cards/SummaryCards';
 import DeviceTable from '../components/devices/DeviceTable';
 import SetpointActualChart from '../components/charts/SetpointActualChart';
 import TrackingErrorChart from '../components/charts/TrackingErrorChart';
@@ -12,6 +11,10 @@ import { useLiveMetrics } from '../hooks/useLiveMetrics';
 import { DeviceTelemetry } from '../api/types';
 import { fetchDeviceTelemetry } from '../api/client';
 import TelemetryControlPanel from '../components/TelemetryControlPanel';
+import HeroStrip from '../components/layout/HeroStrip';
+import OrganicDivider from '../components/layout/OrganicDivider';
+import EmptyState from '../components/empty/EmptyState';
+import LineIcon from '../components/icons/LineIcon';
 
 const Dashboard = () => {
   const theme = useDayNightTheme();
@@ -20,19 +23,23 @@ const Dashboard = () => {
   const [deviceTelemetry, setDeviceTelemetry] = useState<DeviceTelemetry[]>([]);
   const [filter, setFilter] = useState<'all' | 'physical' | 'simulated'>('all');
   const [toast, setToast] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState('overview');
+  const [activeSection, setActiveSection] = useState('hero');
 
-  const overviewRef = useRef<HTMLDivElement | null>(null);
-  const metricsRef = useRef<HTMLDivElement | null>(null);
+  const heroRef = useRef<HTMLDivElement | null>(null);
+  const generationRef = useRef<HTMLDivElement | null>(null);
+  const consumptionRef = useRef<HTMLDivElement | null>(null);
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const forecastRef = useRef<HTMLDivElement | null>(null);
   const devicesRef = useRef<HTMLDivElement | null>(null);
-  const sitesRef = useRef<HTMLDivElement | null>(null);
   const settingsRef = useRef<HTMLDivElement | null>(null);
 
   const sectionRefs = {
-    overview: overviewRef,
-    metrics: metricsRef,
+    hero: heroRef,
+    generation: generationRef,
+    consumption: consumptionRef,
+    grid: gridRef,
+    forecast: forecastRef,
     devices: devicesRef,
-    sites: sitesRef,
     settings: settingsRef,
   } as const;
 
@@ -61,26 +68,47 @@ const Dashboard = () => {
   return (
     <LayoutShell active={activeSection} onNav={handleNav} summary={summary} health={health} theme={theme}>
       {error && <div className="toast">{error}</div>}
-      <div ref={overviewRef}>
-        <SummaryCards summary={summary} tracking={tracking} devices={devices} />
+      <div ref={heroRef}>
+        <HeroStrip summary={summary} health={health} devices={devices} tracking={tracking} theme={theme} />
       </div>
 
-      <div ref={metricsRef} className="section">
-        <div className="card">
-          <h3>Performance & fairness</h3>
-          <p className="subtle">Animated, low-latency view of the control loop.</p>
-          <div className="chart-shell">
-            <SetpointActualChart deviceId={selectedId} telemetry={deviceTelemetry} />
-            <TrackingErrorChart metrics={tracking} />
-            <SocDistributionChart devices={devices} metrics={tracking} />
-          </div>
+      <OrganicDivider />
+
+      <section ref={generationRef} className="section-block">
+        <div className="section-head">
+          <h2>
+            <LineIcon name="power" size={20} /> Generation
+          </h2>
+          <p>Live feeder output against limits with renewable-first context.</p>
         </div>
-        <FeederHistoryChart data={history} loading={loading} error={error} />
-      </div>
+        <div className="section-grid">
+          <SetpointActualChart deviceId={selectedId} telemetry={deviceTelemetry} />
+          <FeederHistoryChart data={history} loading={loading} error={error} />
+        </div>
+      </section>
 
-      <div ref={devicesRef} className="section single">
-        <div>
-          <h2>Devices</h2>
+      <section ref={consumptionRef} className="section-block">
+        <div className="section-head">
+          <h2>
+            <LineIcon name="leaf" size={20} /> Consumption
+          </h2>
+          <p>How dispatch tracks demand and balances priority.</p>
+        </div>
+        <div className="section-grid">
+          <TrackingErrorChart metrics={tracking} />
+          <SocDistributionChart devices={devices} metrics={tracking} />
+        </div>
+      </section>
+
+      <section ref={gridRef} className="section-block">
+        <div className="section-head">
+          <h2>
+            <LineIcon name="alert" size={20} /> Grid health
+          </h2>
+          <p>Device quality, connectivity, and site fairness overview.</p>
+        </div>
+        <div className="card">
+          <h3>Device telemetry</h3>
           <p className="subtle">Tap a row to animate detail charts. Pi agents are highlighted.</p>
           <DeviceTable
             devices={viewDevices}
@@ -91,25 +119,53 @@ const Dashboard = () => {
             onFilter={setFilter}
           />
         </div>
-      </div>
+      </section>
 
-      <div ref={sitesRef} className="section single">
-        <div className="card-grid" style={{ marginTop: '1rem' }}>
+      <section ref={forecastRef} className="section-block">
+        <div className="section-head">
+          <h2>
+            <LineIcon name="cloud" size={20} /> Forecast
+          </h2>
+          <p>Projected headroom and fairness outlook.</p>
+        </div>
+        <div className="card-grid">
           <div className="card">
-            <h2>Sites</h2>
-            <p className="subtle">Site-level telemetry rollups and history.</p>
+            <h3>Headroom outlook</h3>
+            <p className="subtle">Smooth curtailment and SOC-aware planning.</p>
             {aggregated ? (
-              <p className="subtle">Fairness score {aggregated.feeder.fairnessScore.toFixed(2)}</p>
+              <div className="metric-row">
+                <span className="value">{aggregated.feeder.fairnessScore.toFixed(2)}</span>
+                <span className="subtle">Fairness score</span>
+              </div>
             ) : (
-              <p className="subtle">Loading aggregated site metrics…</p>
+              <EmptyState title="No forecast yet" description="Waiting for aggregated headroom metrics." />
             )}
           </div>
         </div>
-      </div>
+      </section>
 
-      <div ref={settingsRef} className="section single">
-        <TelemetryControlPanel onSubmitted={() => handleNav('overview')} />
-      </div>
+      <section ref={devicesRef} className="section-block">
+        <div className="section-head">
+          <h2>
+            <LineIcon name="device" size={20} /> Devices
+          </h2>
+          <p>Selection-aware controls for individual DERs.</p>
+        </div>
+        <div className="card-grid">
+          <SetpointActualChart deviceId={selectedId} telemetry={deviceTelemetry} />
+          <TrackingErrorChart metrics={tracking} />
+        </div>
+      </section>
+
+      <section ref={settingsRef} className="section-block">
+        <div className="section-head">
+          <h2>
+            <LineIcon name="spark" size={20} /> Controls
+          </h2>
+          <p>Adjust feeder constraints with a single submission.</p>
+        </div>
+        <TelemetryControlPanel onSubmitted={() => handleNav('hero')} />
+      </section>
 
       {toast && (
         <div className="toast" onAnimationEnd={() => setToast(null)}>

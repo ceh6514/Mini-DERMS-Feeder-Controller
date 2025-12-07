@@ -165,8 +165,8 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
       >
         <defs>
           <linearGradient id="historyArea" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="var(--accent-strong)" stopOpacity="0.22" />
-            <stop offset="100%" stopColor="var(--accent-strong)" stopOpacity="0" />
+            <stop offset="0%" stopColor="var(--color-accent-strong)" stopOpacity="0.22" />
+            <stop offset="100%" stopColor="var(--color-accent-strong)" stopOpacity="0" />
           </linearGradient>
         </defs>
         {/* Limit line */}
@@ -175,7 +175,7 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
           y1={yScale(data.limitKw)}
           x2={width - padding.right}
           y2={yScale(data.limitKw)}
-          stroke="var(--alert-strong)"
+          stroke="var(--color-warning)"
           strokeDasharray="6 4"
           strokeWidth={2}
         />
@@ -185,7 +185,7 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
         <path
           d={pathD}
           fill="none"
-          stroke="var(--accent-strong)"
+          stroke="var(--color-accent-strong)"
           strokeWidth={3}
           strokeLinecap="round"
         />
@@ -196,20 +196,20 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
           y1={yScale(0)}
           x2={width - padding.right}
           y2={yScale(0)}
-          stroke="var(--border-subtle)"
+          stroke="var(--color-border)"
         />
         <line
           x1={padding.left}
           y1={padding.top}
           x2={padding.left}
           y2={height - padding.bottom}
-          stroke="var(--border-subtle)"
+          stroke="var(--color-border)"
         />
 
         {/* Y-axis labels */}
         {[0, yMax / 2, yMax].map((val) => (
           <g key={val}>
-            <text x={padding.left - 8} y={yScale(val) + 4} textAnchor="end" fontSize={12} fill="var(--text-muted)">
+            <text x={padding.left - 8} y={yScale(val) + 4} textAnchor="end" fontSize={12} fill="var(--color-text-muted)">
               {val.toFixed(0)} kW
             </text>
             <line
@@ -217,7 +217,7 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
               y1={yScale(val)}
               x2={width - padding.right}
               y2={yScale(val)}
-              stroke="var(--border-muted)"
+              stroke="var(--color-border)"
               strokeDasharray="4 4"
             />
           </g>
@@ -231,7 +231,7 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
             y={height - padding.bottom + 20}
             textAnchor="middle"
             fontSize={12}
-            fill="var(--text-muted)"
+            fill="var(--color-text-muted)"
           >
             {label.text}
           </text>
@@ -239,12 +239,12 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
 
         {/* Legend */}
         <g transform={`translate(${padding.left}, ${padding.top})`}>
-          <rect x={0} y={0} width={12} height={12} fill="var(--accent-strong)" />
-          <text x={18} y={11} fontSize={12} fill="var(--text-strong)">
+          <rect x={0} y={0} width={12} height={12} fill="var(--color-accent-strong)" />
+          <text x={18} y={11} fontSize={12} fill="var(--color-text-strong)">
             Total kW
           </text>
-          <line x1={90} y1={6} x2={110} y2={6} stroke="var(--alert-strong)" strokeDasharray="6 4" strokeWidth={2} />
-          <text x={116} y={11} fontSize={12} fill="var(--text-strong)">
+          <line x1={90} y1={6} x2={110} y2={6} stroke="var(--color-warning)" strokeDasharray="6 4" strokeWidth={2} />
+          <text x={116} y={11} fontSize={12} fill="var(--color-text-strong)">
             Limit ({data.limitKw} kW)
           </text>
         </g>
