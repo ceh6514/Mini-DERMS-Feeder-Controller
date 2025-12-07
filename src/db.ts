@@ -16,13 +16,15 @@ export async function initSchema(): Promise<void> {
       type TEXT NOT NULL,
       site_id TEXT NOT NULL,
       p_max_kw REAL NOT NULL,
-      priority INTEGER
+      priority INTEGER,
+      is_physical BOOLEAN NOT NULL DEFAULT FALSE
     );
   `);
 
   await pool.query(`
     ALTER TABLE devices
-    ADD COLUMN IF NOT EXISTS priority INTEGER;
+    ADD COLUMN IF NOT EXISTS priority INTEGER,
+    ADD COLUMN IF NOT EXISTS is_physical BOOLEAN NOT NULL DEFAULT FALSE;
   `);
 
   await pool.query(`
@@ -61,6 +63,11 @@ export async function initSchema(): Promise<void> {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_telemetry_device_ts
       ON telemetry (device_id, ts DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_telemetry_recent_setpoint
+      ON telemetry (device_id, ts DESC, p_setpoint_kw, soc);
   `);
 
   await pool.query(`

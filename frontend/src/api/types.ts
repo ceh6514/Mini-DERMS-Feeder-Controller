@@ -19,6 +19,27 @@ export interface DeviceWithLatest {
   latestTelemetry: DeviceTelemetry | null;
   isPi: boolean;
   isSimulated: boolean;
+  isPhysical?: boolean;
+}
+
+export interface DeviceMetrics {
+  deviceId: string;
+  type: string;
+  siteId: string;
+  avgAbsError: number;
+  lastSetpointKw: number | null;
+  lastActualKw: number | null;
+  priority: number;
+  soc: number | null;
+  isPhysical: boolean;
+}
+
+export interface ControlParams {
+  globalKwLimit: number;
+  minSocReserve: number;
+  targetSoc: number;
+  respectPriority: boolean;
+  socWeight: number;
 }
 
 export interface FeederSummary {

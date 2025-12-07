@@ -1,4 +1,5 @@
 import { query } from '../db';
+import { DeviceMetrics } from '../types/control';
 import { getCurrentFeederLimit } from './eventsRepo';
 
 export interface TelemetryRow {
@@ -77,6 +78,7 @@ export interface LiveDeviceRow {
   siteId: string;
   pMaxKw: number;
   priority: number | null;
+  isPhysical: boolean;
   lastSeen: Date;
   pActualKw: number;
   pSetpointKw: number | null;
@@ -144,6 +146,7 @@ export async function getLiveDevices(minutes = 2): Promise<LiveDeviceRow[]> {
       d.site_id AS "siteId",
       d.p_max_kw AS "pMaxKw",
       d.priority,
+      d.is_physical AS "isPhysical",
       t.ts AS "lastSeen",
       t.p_actual_kw AS "pActualKw",
       t.p_setpoint_kw AS "pSetpointKw",
@@ -158,6 +161,92 @@ export async function getLiveDevices(minutes = 2): Promise<LiveDeviceRow[]> {
   return rows.map((row) => ({
     ...row,
     lastSeen: row.lastSeen instanceof Date ? row.lastSeen : new Date(row.lastSeen),
+    isPhysical: Boolean(row.isPhysical),
+  }));
+}
+
+export async function getTrackingErrorWindow(
+  windowMinutes: number,
+): Promise<DeviceMetrics[]> {
+  const text = `
+    SELECT
+      t.device_id AS "deviceId",
+      d.type,
+      d.site_id AS "siteId",
+      d.priority,
+      d.is_physical AS "isPhysical",
+      t.ts,
+      t.p_actual_kw,
+      t.p_setpoint_kw,
+      t.soc
+    FROM telemetry t
+    JOIN devices d ON d.id = t.device_id
+    WHERE t.ts >= NOW() - ($1 || ' minutes')::INTERVAL
+    ORDER BY t.device_id, t.ts DESC;
+  `;
+
+  const { rows } = await query<{
+    deviceId: string;
+    type: string;
+    siteId: string;
+    priority: number | null;
+    isPhysical: boolean;
+    ts: Date;
+    p_actual_kw: number | null;
+    p_setpoint_kw: number | null;
+    soc: number | null;
+  }>(text, [windowMinutes]);
+
+  const aggregates = new Map<string, {
+    totalError: number;
+    count: number;
+    lastSetpointKw: number | null;
+    lastActualKw: number | null;
+    soc: number | null;
+    type: string;
+    siteId: string;
+    priority: number;
+    isPhysical: boolean;
+  }>();
+
+  for (const row of rows) {
+    const key = row.deviceId;
+    const setpoint = row.p_setpoint_kw ?? 0;
+    const actual = row.p_actual_kw ?? 0;
+    const absError = Math.abs(actual - setpoint);
+    const priority = Number.isFinite(row.priority) && (row.priority as number) > 0
+      ? (row.priority as number)
+      : 1;
+
+    const existing = aggregates.get(key);
+    if (!existing) {
+      aggregates.set(key, {
+        totalError: absError,
+        count: 1,
+        lastSetpointKw: row.p_setpoint_kw ?? null,
+        lastActualKw: row.p_actual_kw ?? null,
+        soc: row.soc ?? null,
+        type: row.type,
+        siteId: row.siteId,
+        priority,
+        isPhysical: Boolean(row.isPhysical),
+      });
+    } else {
+      existing.totalError += absError;
+      existing.count += 1;
+    }
+  }
+
+  return [...aggregates.entries()].map(([deviceId, agg]) => ({
+    deviceId,
+    type: agg.type,
+    siteId: agg.siteId,
+    priority: agg.priority,
+    soc: agg.soc,
+    isPhysical: agg.isPhysical,
+    avgAbsError: agg.count > 0 ? agg.totalError / agg.count : 0,
+    lastSetpointKw: agg.lastSetpointKw,
+    lastActualKw: agg.lastActualKw,
   }));
 }
 

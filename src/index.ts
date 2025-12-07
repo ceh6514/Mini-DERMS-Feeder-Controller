@@ -11,6 +11,7 @@ import { openApiSpec } from './openapi';
 import simulationRouter from './routes/simulation';
 import { getControlLoopState } from './state/controlLoopMonitor';
 import drProgramsRouter from './routes/drPrograms';
+import metricsRouter from './routes/metrics';
 
 const swaggerHtml = `<!DOCTYPE html>
 <html>
@@ -97,6 +98,7 @@ async function startServer() {
     app.use('/api/events', eventsRouter);
     app.use('/api/simulation', simulationRouter);
     app.use('/api/dr-programs', drProgramsRouter);
+    app.use('/api', metricsRouter);
 
     app.listen(config.port, () => {
       console.log(

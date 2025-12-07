@@ -2,6 +2,11 @@
 
 Controls a fleet of simulated DERs (solar/battery/EV chargers). Uses messaging (MQTT), a time-series database, and a backend service that makes control decisions. Has a small dashboard showing what the system is doing.
 
+## What changed in this upgrade
+- The control loop is now SOC-aware and priority-based, considering Pi-based DER agents (`pi-*`) alongside simulated EV/battery devices. It respects a global feeder limit, min SOC reserve, and a target SOC horizon, allocating headroom to higher-priority/low-SOC assets first.
+- A new tracking-error metric computes the rolling average of `p_actual_kw - p_setpoint_kw` per device and is exposed at `GET /api/metrics/tracking-error`.
+- The dashboard has been rebuilt into a responsive, animated control center with device origin filters, physical Pi badges, SOC/track-error charts, and smoother day/night theming.
+
 ## 🧰 Prerequisites
 - Docker and Docker Compose (for the one-command stack)
 - Node.js 18+ and npm
@@ -21,6 +26,8 @@ docker compose --profile sim up --build
 - Dashboard: http://localhost:5173
 - API: http://localhost:3001
 - Simulator containers are included when the `sim` profile is enabled. Stop everything with `npm run stop:stack` or `docker compose down` when you are done.
+
+The rebuilt dashboard highlights Pi-based DERs with a "Physical" badge, lets you filter by origin, and visualizes SOC distribution, tracking error, and setpoint-vs-actual curves. Select a device row to drive the animated charts.
 
 ## 🏗️ Run manually (separate terminals)
 If you prefer to run pieces yourself:

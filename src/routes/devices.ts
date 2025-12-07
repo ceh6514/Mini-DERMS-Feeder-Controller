@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getAllDevices, getDeviceById, upsertDevice } from '../repositories/devicesRepo';
+import { getAllDevices, getDeviceById, upsertDevice, isPhysicalDeviceId } from '../repositories/devicesRepo';
 import {
   getLatestTelemetryPerDevice,
   getLatestSolarWeatherSample,
@@ -29,13 +29,14 @@ router.get('/devices', async (_req, res) => {
 
   res.json(
     devices.map((d) => {
-      const isPi = d.id.startsWith('pi-');
+      const isPi = d.id.startsWith('pi-') || Boolean(d.isPhysical);
       const isSimulated =
-        d.id.startsWith('pv-') || d.id.startsWith('bat-') || d.id.startsWith('ev-');
+        !isPi && (d.id.startsWith('pv-') || d.id.startsWith('bat-') || d.id.startsWith('ev-'));
 
       return {
         ...d,
         priority: d.priority ?? null,
+        isPhysical: isPi,
         latestTelemetry: latestByDevice[d.id] ?? null,
         isPi,
         isSimulated,
@@ -46,7 +47,9 @@ router.get('/devices', async (_req, res) => {
 
 router.get('/telemetry/:deviceId', async (req, res) => {
   const { deviceId } = req.params;
-  const telemetry = await getRecentTelemetry(deviceId, 100);
+  const limitParam = Number(req.query.limit ?? 100);
+  const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 100;
+  const telemetry = await getRecentTelemetry(deviceId, limit);
   res.json(telemetry);
 });
 
@@ -80,6 +83,7 @@ router.post('/telemetry', async (req, res) => {
       siteId,
       pMaxKw: telemetry.pMaxKw,
       priority: telemetry.priority,
+      isPhysical: isPhysicalDeviceId(telemetry.deviceId),
     });
 
     recordHeartbeat(telemetry.deviceId, telemetry.ts.getTime());
