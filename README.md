@@ -53,5 +53,28 @@ If you prefer to run pieces yourself:
 
 The backend and frontend hot-reload when running locally or mounted into containers.
 
+## 🐍 Run the Raspberry Pi DER agent
+To connect a physical Pi-based device, use the provided MQTT agent:
+
+1. Copy the example config and edit it with your device metadata:
+   ```bash
+   cp config.json config.pi.json
+   ```
+   Update `config.pi.json` with your device details:
+   - `broker_host` / `broker_port`: point to the controller's MQTT broker (e.g., the Mosquitto instance from Docker Compose).
+   - `device_id`, `device_type` (`pv`, `battery`, or `ev`), `site_id`, `p_max_kw`: identifiers and capabilities for this device.
+   - `publish_interval_seconds`: how often the agent publishes telemetry.
+2. On the Raspberry Pi, install Python dependencies (use a venv if preferred):
+   ```bash
+   python3 -m pip install --upgrade pip
+   python3 -m pip install paho-mqtt
+   ```
+3. Launch the agent and point it at your config:
+   ```bash
+   python3 pi_der_agent.py --config config.pi.json
+   ```
+
+The agent subscribes to `der/control/<deviceId>` for setpoints and publishes telemetry to `der/telemetry/<deviceId>`. Ensure `broker_host` resolves to the MQTT broker used by the feeder controller so control messages reach the device.
+
 ## Data lifecycle
 On startup, the service initializes the `devices`, `telemetry`, `events`, and `dr_programs` tables (see `src/db.ts`). The control loop and MQTT ingest operate continuously once the server is running.
