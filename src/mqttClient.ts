@@ -3,6 +3,10 @@ import config from './config';
 import { upsertDevice } from './repositories/devicesRepo';
 import { insertTelemetry } from './repositories/telemetryRepo';
 import { recordHeartbeat } from './state/controlLoopMonitor';
+import {
+  TelemetryValidationError,
+  validateTelemetryPayload,
+} from './validation/telemetry';
 
 export let mqttClient: MqttClient | null = null;
 let lastError: string | null = null;
@@ -11,66 +15,38 @@ let lastError: string | null = null;
  * Parse a telemetry message and write it into the DB.
  */
 async function parseAndStoreMessage(topic: string, payload: Buffer) {
-  const topicParts = topic.split('/');
-  const deviceId = topicParts[2] ?? '';
-
   try {
-    const raw = JSON.parse(payload.toString('utf-8')) as {
-      deviceId?: string;
-      type?: string;
-      timestamp?: string;
-      p_actual_kw?: number;
-      p_setpoint_kw?: number | null;
-      soc?: number | null;
-      site_id?: string;
-      p_max_kw?: number;
-      priority?: number | null;
-    };
-
-    const id = raw.deviceId ?? deviceId;
-    const type = raw.type ?? 'unknown';
-    const ts = raw.timestamp ? new Date(raw.timestamp) : new Date();
-    const pActual = Number(raw.p_actual_kw ?? 0);
-    const pSetpoint =
-      raw.p_setpoint_kw !== undefined && raw.p_setpoint_kw !== null
-        ? Number(raw.p_setpoint_kw)
-        : null;
-    const soc =
-      raw.soc !== undefined && raw.soc !== null ? Number(raw.soc) : null;
-    const siteId = raw.site_id ?? 'default';
-    const pMaxKw = raw.p_max_kw ?? 0;
-    const priority =
-      raw.priority !== undefined && raw.priority !== null
-        ? Number(raw.priority)
-        : null;
-
-    if (!id) {
-      console.warn('[mqttClient] telemetry without deviceId, topic=', topic);
-      return;
-    }
+    const raw = JSON.parse(payload.toString('utf-8')) as Record<string, unknown>;
+    const topicParts = topic.split('/');
+    const fallbackDeviceId = topicParts[2];
+    const telemetry = validateTelemetryPayload(raw, fallbackDeviceId);
 
     //Upsert device metadata (best-effort)
     await upsertDevice({
-      id,
-      type,
-      siteId,
-      pMaxKw,
-      priority,
+      id: telemetry.deviceId,
+      type: telemetry.type,
+      siteId: telemetry.siteId,
+      pMaxKw: telemetry.pMaxKw,
+      priority: telemetry.priority,
     });
 
-    recordHeartbeat(id, ts.getTime());
+    recordHeartbeat(telemetry.deviceId, telemetry.ts.getTime());
 
     //Insert telemetry row (after the device row exists)
     await insertTelemetry({
-      device_id: id,
-      ts,
-      type,
-      p_actual_kw: pActual,
-      p_setpoint_kw: pSetpoint,
-      soc,
-      site_id: siteId,
+      device_id: telemetry.deviceId,
+      ts: telemetry.ts,
+      type: telemetry.type,
+      p_actual_kw: telemetry.pActualKw,
+      p_setpoint_kw: telemetry.pSetpointKw,
+      soc: telemetry.soc,
+      site_id: telemetry.siteId,
     });
   } catch (err) {
+    if (err instanceof TelemetryValidationError) {
+      console.warn('[mqttClient] invalid telemetry payload', err.message);
+      return;
+    }
     console.error('[mqttClient] failed to parse telemetry', err);
   }
 }

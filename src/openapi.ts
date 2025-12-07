@@ -204,19 +204,26 @@ export const openApiSpec = {
               schema: {
                 type: 'object',
                 properties: {
-                  device_id: { type: 'string' },
-                  ts: { type: 'string', format: 'date-time' },
+                  deviceId: { type: 'string' },
+                  device_id: { type: 'string', description: 'Legacy alias for deviceId' },
+                  ts: {
+                    type: 'string',
+                    format: 'date-time',
+                    description: 'Alias for timestamp',
+                  },
+                  timestamp: { type: 'string', format: 'date-time' },
+                  type: {
+                    type: 'string',
+                    enum: ['pv', 'battery', 'ev', 'solar_weather', 'unknown'],
+                  },
                   p_actual_kw: { type: 'number' },
                   p_setpoint_kw: { type: 'number', nullable: true },
                   soc: { type: 'number', nullable: true },
                   site_id: { type: 'string' },
+                  p_max_kw: { type: 'number', nullable: true },
+                  priority: { type: 'number', nullable: true },
                 },
-                required: [
-                  'device_id',
-                  'ts',
-                  'p_actual_kw',
-                  'site_id',
-                ],
+                required: ['deviceId', 'timestamp', 'type', 'p_actual_kw', 'site_id'],
               },
             },
           },
@@ -234,6 +241,32 @@ export const openApiSpec = {
             },
           },
           400: { description: 'Validation error' },
+        },
+      },
+    },
+    '/api/live-devices': {
+      get: {
+        summary: 'Devices that reported telemetry within the last N minutes',
+        parameters: [
+          {
+            name: 'minutes',
+            in: 'query',
+            required: false,
+            schema: { type: 'integer', default: 2, minimum: 1 },
+          },
+        ],
+        responses: {
+          200: {
+            description: 'Most recent telemetry per recently seen device',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/LiveDevice' },
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -467,8 +500,44 @@ export const openApiSpec = {
           latestTelemetry: {
             anyOf: [{ $ref: '#/components/schemas/TelemetryRow' }, { type: 'null' }],
           },
+          isPi: { type: 'boolean' },
+          isSimulated: { type: 'boolean' },
         },
-        required: ['id', 'type', 'siteId', 'pMaxKw', 'priority', 'latestTelemetry'],
+        required: [
+          'id',
+          'type',
+          'siteId',
+          'pMaxKw',
+          'priority',
+          'latestTelemetry',
+          'isPi',
+          'isSimulated',
+        ],
+      },
+      LiveDevice: {
+        type: 'object',
+        properties: {
+          deviceId: { type: 'string' },
+          type: { type: 'string' },
+          siteId: { type: 'string' },
+          pMaxKw: { type: 'number' },
+          priority: { type: 'number', nullable: true },
+          lastSeen: { type: 'string', format: 'date-time' },
+          pActualKw: { type: 'number' },
+          pSetpointKw: { type: 'number', nullable: true },
+          soc: { type: 'number', nullable: true },
+        },
+        required: [
+          'deviceId',
+          'type',
+          'siteId',
+          'pMaxKw',
+          'priority',
+          'lastSeen',
+          'pActualKw',
+          'pSetpointKw',
+          'soc',
+        ],
       },
       EventRow: {
         type: 'object',

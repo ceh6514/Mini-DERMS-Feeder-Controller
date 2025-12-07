@@ -1,0 +1,9 @@
+{
+  "broker_host": "192.168.1.100",
+  "broker_port": 1883,
+  "device_id": "pi-der-001",
+  "device_type": "battery",
+  "site_id": "home-site",
+  "p_max_kw": 5.0,
+  "publish_interval_seconds": 5
+}

@@ -59,6 +59,11 @@ export async function initSchema(): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_telemetry_device_ts
+      ON telemetry (device_id, ts DESC);
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS dr_programs (
       id BIGSERIAL PRIMARY KEY,
       name TEXT NOT NULL,

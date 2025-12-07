@@ -71,6 +71,18 @@ export interface AggregatedMetrics {
   socTrajectories: SocTrajectoryPoint[];
 }
 
+export interface LiveDeviceRow {
+  deviceId: string;
+  type: string;
+  siteId: string;
+  pMaxKw: number;
+  priority: number | null;
+  lastSeen: Date;
+  pActualKw: number;
+  pSetpointKw: number | null;
+  soc: number | null;
+}
+
 export async function insertTelemetry(row: TelemetryRow): Promise<void> {
   const text = `
     INSERT INTO telemetry (
@@ -122,6 +134,31 @@ export async function getLatestTelemetryPerDevice(): Promise<TelemetryRow[]> {
   `;
   const { rows } = await query<TelemetryRow>(text);
   return rows;
+}
+
+export async function getLiveDevices(minutes = 2): Promise<LiveDeviceRow[]> {
+  const text = `
+    SELECT DISTINCT ON (t.device_id)
+      t.device_id AS "deviceId",
+      d.type,
+      d.site_id AS "siteId",
+      d.p_max_kw AS "pMaxKw",
+      d.priority,
+      t.ts AS "lastSeen",
+      t.p_actual_kw AS "pActualKw",
+      t.p_setpoint_kw AS "pSetpointKw",
+      t.soc
+    FROM telemetry t
+    JOIN devices d ON d.id = t.device_id
+    WHERE t.ts >= NOW() - ($1 || ' minutes')::INTERVAL
+    ORDER BY t.device_id, t.ts DESC;
+  `;
+
+  const { rows } = await query<LiveDeviceRow>(text, [minutes]);
+  return rows.map((row) => ({
+    ...row,
+    lastSeen: row.lastSeen instanceof Date ? row.lastSeen : new Date(row.lastSeen),
+  }));
 }
 
 export async function getRecentTelemetry(deviceId: string, limit = 100): Promise<TelemetryRow[]> {

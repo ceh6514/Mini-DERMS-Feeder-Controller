@@ -43,7 +43,17 @@ const DeviceTable = ({ devices, offlineDeviceIds }: Props) => {
                   {isOffline ? 'Offline' : 'Online'}
                 </span>
               </td>
-              <td>{device.id}</td>
+              <td>
+                <div className="device-id-cell">
+                  <div className="device-id-text">{device.id}</div>
+                  <div className="device-tags">
+                    {device.isPi && <span className="pill pi-pill">Pi agent</span>}
+                    {!device.isPi && device.isSimulated && (
+                      <span className="pill muted">Simulated</span>
+                    )}
+                  </div>
+                </div>
+              </td>
               <td style={{ textTransform: 'capitalize' }}>{device.type}</td>
               <td>{device.siteId}</td>
               <td>
