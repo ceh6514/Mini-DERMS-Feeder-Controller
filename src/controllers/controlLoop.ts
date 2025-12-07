@@ -83,17 +83,43 @@ export function prepareEvDevices(
     });
 }
 
+export function reconcileDeviceDeficits(evDevices: DeviceWithTelemetry[]) {
+  const activeDeviceIds = new Set(evDevices.map((ev) => ev.device.id));
+  for (const deviceId of [...deviceDeficits.keys()]) {
+    if (!activeDeviceIds.has(deviceId)) {
+      deviceDeficits.delete(deviceId);
+    }
+  }
+}
+
 export function computeAllowedShares(
   evDevices: DeviceWithTelemetry[],
   availableForEv: number
 ): Map<string, number> {
   const allowed = new Map<string, number>();
-  if (availableForEv <= 0 || evDevices.length === 0) return allowed;
 
-  const totalWeight = evDevices.reduce(
-    (sum, ev) => sum + Math.max(1, Number.isFinite(ev.priority) ? ev.priority : 1),
-    0
-  );
+  reconcileDeviceDeficits(evDevices);
+
+  if (evDevices.length === 0) return allowed;
+
+  if (availableForEv <= 0) {
+    for (const ev of evDevices) {
+      allowed.set(ev.device.id, 0);
+    }
+    return allowed;
+  }
+
+  const getWeight = (ev: DeviceWithTelemetry) =>
+    Math.max(
+      1,
+      Number.isFinite(ev.priority)
+        ? (ev.priority as number)
+        : Number.isFinite(ev.pMax)
+          ? (ev.pMax as number)
+          : 1
+    );
+
+  const totalWeight = evDevices.reduce((sum, ev) => sum + getWeight(ev), 0);
   if (totalWeight <= 0) return allowed;
 
   const quantumPerWeight = availableForEv / totalWeight;
@@ -101,7 +127,7 @@ export function computeAllowedShares(
   // Accrue new credit based on weight, then allocate in deficit order to compensate
   // devices that were under-served in previous ticks.
   for (const ev of evDevices) {
-    const weight = Math.max(1, Number.isFinite(ev.priority) ? ev.priority : 1);
+    const weight = getWeight(ev);
     const existing = deviceDeficits.get(ev.device.id) ?? 0;
     deviceDeficits.set(ev.device.id, existing + weight * quantumPerWeight);
   }
@@ -111,9 +137,9 @@ export function computeAllowedShares(
     const deficitB = deviceDeficits.get(b.device.id) ?? 0;
     const deficitA = deviceDeficits.get(a.device.id) ?? 0;
     if (deficitB !== deficitA) return deficitB - deficitA;
-    const priorityB = Math.max(1, Number.isFinite(b.priority) ? b.priority : 1);
-    const priorityA = Math.max(1, Number.isFinite(a.priority) ? a.priority : 1);
-    if (priorityB !== priorityA) return priorityB - priorityA;
+    const weightB = getWeight(b);
+    const weightA = getWeight(a);
+    if (weightB !== weightA) return weightB - weightA;
     return a.device.id.localeCompare(b.device.id);
   });
 
@@ -278,6 +304,7 @@ export function startControlLoop() {
         0
       );
       const evDevices = prepareEvDevices(onlineTelemetry, deviceLookup);
+      reconcileDeviceDeficits(evDevices);
       const totalEvKw = evDevices.reduce((sum, ev) => sum + ev.pActual, 0);
       const nonEvKw = totalKw - totalEvKw;
       const availableForEv = Math.max(limitKw - nonEvKw, 0);
