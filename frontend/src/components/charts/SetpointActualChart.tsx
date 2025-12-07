@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { DeviceTelemetry } from '../../api/types';
+import { normalizeTelemetryForCharts } from '../../utils/telemetryNormalization';
 
 interface Props {
   deviceId: string | null;
@@ -7,11 +8,7 @@ interface Props {
 }
 
 const SetpointActualChart: React.FC<Props> = ({ deviceId, telemetry }) => {
-  const points = useMemo(() => {
-    return [...telemetry]
-      .map((t) => ({ ...t, tsMs: new Date(t.ts).getTime() }))
-      .sort((a, b) => a.tsMs - b.tsMs);
-  }, [telemetry]);
+  const points = useMemo(() => normalizeTelemetryForCharts(telemetry, 240), [telemetry]);
 
   if (!deviceId || points.length === 0) {
     return (
@@ -26,22 +23,35 @@ const SetpointActualChart: React.FC<Props> = ({ deviceId, telemetry }) => {
   const height = 200;
   const padding = { top: 16, right: 12, bottom: 28, left: 42 };
   const times = points.map((p) => p.tsMs);
-  const values = points.flatMap((p) => [p.p_actual_kw ?? 0, p.p_setpoint_kw ?? 0]);
+  const values = points.flatMap((p) => [p.p_actual_kw, p.setpoint_plot_kw].filter((v): v is number => v !== null));
   const minT = Math.min(...times);
   const maxT = Math.max(...times);
   const span = Math.max(maxT - minT, 1);
-  const maxVal = Math.max(1, ...values.map((v) => Math.abs(v)));
+  const maxVal = values.length > 0 ? Math.max(1, ...values.map((v) => Math.abs(v))) : 1;
 
   const scaleX = (ts: number) =>
     padding.left + ((ts - minT) / span) * (width - padding.left - padding.right);
   const scaleY = (v: number) => padding.top + (1 - v / (maxVal * 1.2)) * (height - padding.top - padding.bottom);
 
-  const actualPath = points
-    .map((p, i) => `${i === 0 ? 'M' : 'L'} ${scaleX(p.tsMs).toFixed(1)} ${scaleY(p.p_actual_kw ?? 0).toFixed(1)}`)
-    .join(' ');
-  const setpointPath = points
-    .map((p, i) => `${i === 0 ? 'M' : 'L'} ${scaleX(p.tsMs).toFixed(1)} ${scaleY(p.p_setpoint_kw ?? 0).toFixed(1)}`)
-    .join(' ');
+  const buildPath = (valueFn: (p: typeof points[number]) => number | null) => {
+    let started = false;
+    return points
+      .map((p) => {
+        const value = valueFn(p);
+        if (value === null) return null;
+        const command = started ? 'L' : 'M';
+        started = true;
+        return `${command} ${scaleX(p.tsMs).toFixed(1)} ${scaleY(value).toFixed(1)}`;
+      })
+      .filter(Boolean)
+      .join(' ');
+  };
+
+  const actualPath = buildPath((p) => p.p_actual_kw);
+  const setpointPath = buildPath((p) => p.setpoint_plot_kw);
+  const areaPath = actualPath
+    ? `${actualPath} L ${scaleX(times[times.length - 1]).toFixed(1)} ${scaleY(0).toFixed(1)} L ${scaleX(times[0]).toFixed(1)} ${scaleY(0).toFixed(1)} Z`
+    : '';
 
   return (
     <div className="card">
@@ -54,13 +64,11 @@ const SetpointActualChart: React.FC<Props> = ({ deviceId, telemetry }) => {
             <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.05" />
           </linearGradient>
         </defs>
-        <path d={setpointPath} fill="none" stroke="var(--muted)" strokeWidth={2} strokeDasharray="6 6" />
-        <path d={actualPath} fill="none" stroke="var(--accent-strong)" strokeWidth={3} />
-        <path
-          d={`${actualPath} L ${scaleX(times[times.length - 1]).toFixed(1)} ${scaleY(0).toFixed(1)} L ${scaleX(times[0]).toFixed(1)} ${scaleY(0).toFixed(1)} Z`}
-          fill="url(#actualFill)"
-          opacity={0.4}
-        />
+        {setpointPath && (
+          <path d={setpointPath} fill="none" stroke="var(--muted)" strokeWidth={2} strokeDasharray="6 6" />
+        )}
+        {actualPath && <path d={actualPath} fill="none" stroke="var(--accent-strong)" strokeWidth={3} />}
+        {areaPath && <path d={areaPath} fill="url(#actualFill)" opacity={0.4} />}
         <line
           x1={padding.left}
           y1={scaleY(0)}

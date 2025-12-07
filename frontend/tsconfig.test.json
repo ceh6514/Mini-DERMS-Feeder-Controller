@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./.tmp-tests",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": false,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "target": "ES2020",
+    "jsx": "react-jsx"
+  },
+  "include": ["src/utils/telemetryNormalization.ts", "tests/**/*.test.ts"]
+}
