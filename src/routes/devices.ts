@@ -1,12 +1,17 @@
 import { Router } from 'express';
-import { getAllDevices, getDeviceById } from '../repositories/devicesRepo';
+import { getAllDevices, getDeviceById, upsertDevice } from '../repositories/devicesRepo';
 import {
   getLatestTelemetryPerDevice,
   getLatestSolarWeatherSample,
   getRecentTelemetry,
+  getLiveDevices,
   insertTelemetry,
 } from '../repositories/telemetryRepo';
 import { recordHeartbeat } from '../state/controlLoopMonitor';
+import {
+  TelemetryValidationError,
+  validateTelemetryPayload,
+} from '../validation/telemetry';
 
 
 const router = Router();
@@ -23,11 +28,19 @@ router.get('/devices', async (_req, res) => {
   }, {});
 
   res.json(
-    devices.map((d) => ({
-      ...d,
-      priority: d.priority ?? null,
-      latestTelemetry: latestByDevice[d.id] ?? null,
-    })),
+    devices.map((d) => {
+      const isPi = d.id.startsWith('pi-');
+      const isSimulated =
+        d.id.startsWith('pv-') || d.id.startsWith('bat-') || d.id.startsWith('ev-');
+
+      return {
+        ...d,
+        priority: d.priority ?? null,
+        latestTelemetry: latestByDevice[d.id] ?? null,
+        isPi,
+        isSimulated,
+      };
+    }),
   );
 });
 
@@ -55,69 +68,52 @@ router.get('/solar-feeders/:feederId/latest-weather', async (req, res) => {
 });
 
 router.post('/telemetry', async (req, res) => {
-  const { device_id, ts, p_actual_kw, p_setpoint_kw, soc, site_id } = req.body ?? {};
-
-  if (!device_id || typeof device_id !== 'string') {
-    res.status(400).json({ error: 'device_id is required' });
-    return;
-  }
-
-  if (!site_id || typeof site_id !== 'string') {
-    res.status(400).json({ error: 'site_id is required' });
-    return;
-  }
-
-  const timestamp = new Date(ts);
-  if (!ts || Number.isNaN(timestamp.getTime())) {
-    res.status(400).json({ error: 'ts must be a valid timestamp' });
-    return;
-  }
-
-  const pActual = Number(p_actual_kw);
-  if (!Number.isFinite(pActual)) {
-    res.status(400).json({ error: 'p_actual_kw must be a number' });
-    return;
-  }
-
-  let pSetpoint: number | null = null;
-  if (p_setpoint_kw !== undefined && p_setpoint_kw !== null) {
-    pSetpoint = Number(p_setpoint_kw);
-    if (!Number.isFinite(pSetpoint)) {
-      res.status(400).json({ error: 'p_setpoint_kw must be a number when provided' });
-      return;
-    }
-  }
-
-  let socValue: number | null = null;
-  if (soc !== undefined && soc !== null) {
-    socValue = Number(soc);
-    if (!Number.isFinite(socValue)) {
-      res.status(400).json({ error: 'soc must be a number when provided' });
-      return;
-    }
-  }
-
   try {
-    const device = await getDeviceById(device_id);
-    const type = device?.type ?? 'manual';
-    const siteId = device?.siteId ?? site_id;
+    const telemetry = validateTelemetryPayload(req.body ?? {});
+    const device = await getDeviceById(telemetry.deviceId);
+    const type = device?.type ?? telemetry.type;
+    const siteId = device?.siteId ?? telemetry.siteId;
 
-    recordHeartbeat(device_id, timestamp.getTime());
+    await upsertDevice({
+      id: telemetry.deviceId,
+      type,
+      siteId,
+      pMaxKw: telemetry.pMaxKw,
+      priority: telemetry.priority,
+    });
+
+    recordHeartbeat(telemetry.deviceId, telemetry.ts.getTime());
 
     await insertTelemetry({
-      device_id,
-      ts: timestamp,
+      device_id: telemetry.deviceId,
+      ts: telemetry.ts,
       type,
-      p_actual_kw: pActual,
-      p_setpoint_kw: pSetpoint,
-      soc: socValue,
+      p_actual_kw: telemetry.pActualKw,
+      p_setpoint_kw: telemetry.pSetpointKw,
+      soc: telemetry.soc,
       site_id: siteId,
     });
 
     res.status(201).json({ status: 'ok' });
   } catch (err) {
+    if (err instanceof TelemetryValidationError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
     console.error('[telemetry] failed to save telemetry row', err);
     res.status(500).json({ error: 'Failed to save telemetry' });
+  }
+});
+
+router.get('/live-devices', async (req, res) => {
+  try {
+    const minutesParam = Number(req.query.minutes ?? 2);
+    const minutes = Number.isFinite(minutesParam) && minutesParam > 0 ? minutesParam : 2;
+    const devices = await getLiveDevices(minutes);
+    res.json(devices);
+  } catch (err) {
+    console.error('[live-devices] failed to load recent devices', err);
+    res.status(500).json({ error: 'Failed to load live devices' });
   }
 });
 

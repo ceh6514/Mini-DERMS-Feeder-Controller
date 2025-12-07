@@ -17,6 +17,8 @@ export interface DeviceWithLatest {
   pMaxKw: number;
   priority?: number | null;
   latestTelemetry: DeviceTelemetry | null;
+  isPi: boolean;
+  isSimulated: boolean;
 }
 
 export interface FeederSummary {
