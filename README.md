@@ -47,4 +47,4 @@ If you prefer to run pieces yourself:
 The backend and frontend hot-reload when running locally or mounted into containers.
 
 ## Data lifecycle
-On startup, the service initializes the `devices`, `telemetry`, and `events` tables (see `src/db.ts`). The control loop and MQTT ingest operate continuously once the server is running.
+On startup, the service initializes the `devices`, `telemetry`, `events`, and `dr_programs` tables (see `src/db.ts`). The control loop and MQTT ingest operate continuously once the server is running.
