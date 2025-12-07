@@ -10,6 +10,8 @@ import {
   MetricsWindow,
   SimulationMode,
   SimulationModeResponse,
+  DeviceTelemetry,
+  DeviceMetrics,
 } from './types';
 
 export interface CreateDrEventInput {
@@ -229,4 +231,33 @@ export async function fetchAggregatedMetrics(
   }
 
   return (await res.json()) as AggregatedMetricsResponse;
+}
+
+export async function fetchTrackingErrors(
+  minutes?: number,
+): Promise<DeviceMetrics[]> {
+  const params = new URLSearchParams();
+  if (minutes) {
+    params.set('minutes', String(minutes));
+  }
+  const res = await fetch(
+    `${BASE_URL}/api/metrics/tracking-error${params.size ? `?${params.toString()}` : ''}`,
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to fetch tracking error metrics: ${text}`);
+  }
+  return (await res.json()) as DeviceMetrics[];
+}
+
+export async function fetchDeviceTelemetry(
+  deviceId: string,
+  limit = 120,
+): Promise<DeviceTelemetry[]> {
+  const res = await fetch(`${BASE_URL}/api/telemetry/${deviceId}?limit=${limit}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to fetch telemetry for ${deviceId}: ${text}`);
+  }
+  return (await res.json()) as DeviceTelemetry[];
 }

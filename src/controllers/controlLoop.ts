@@ -4,7 +4,7 @@ import {
   getLatestTelemetryPerDevice,
   TelemetryRow,
 } from '../repositories/telemetryRepo';
-import { getAllDevices, Device } from '../repositories/devicesRepo';
+import { getAllDevices, Device, isPhysicalDeviceId } from '../repositories/devicesRepo';
 import { mqttClient } from '../mqttClient';
 import { DrProgramRow, getActiveDrProgram } from '../repositories/drProgramsRepo';
 import {
@@ -17,20 +17,18 @@ import {
 } from '../state/controlLoopMonitor';
 import { notifyOfflineDevices, notifyStalledLoop } from '../alerting';
 import { recordDrImpact } from '../state/drImpact';
+import { ControlParams, DeviceState } from '../types/control';
+import { clampSoc, computeSocAwareAllocations, isDispatchableDevice } from './scheduler';
+import { recordTrackingSample } from '../state/trackingError';
 
 // Track the most recent setpoint we have commanded for each device.
 export const deviceSetpoints = new Map<string, number>();
 // Track per-device deficit/credit used by the allocator to compensate under-served devices.
 export const deviceDeficits = new Map<string, number>();
 
-export interface DeviceWithTelemetry {
-  device: Device;
+export type DeviceWithTelemetry = DeviceState & {
   telemetry: TelemetryRow;
-  currentSetpoint: number;
-  pActual: number;
-  pMax: number;
-  priority: number;
-}
+};
 
 export function buildDeviceLookup(devices: Device[]): Map<string, Device> {
   const lookup = new Map<string, Device>();
@@ -54,37 +52,46 @@ export function getCurrentSetpoint(
   return telemetry.p_actual_kw ?? 0;
 }
 
-export function prepareEvDevices(
+export function prepareDispatchableDevices(
   latest: TelemetryRow[],
-  devices: Map<string, Device>
+  devices: Map<string, Device>,
 ): DeviceWithTelemetry[] {
   return latest
-    .filter((row) => row.type === 'ev')
+    .filter((row) => {
+      const meta = devices.get(row.device_id);
+      return isDispatchableDevice(meta ?? { id: row.device_id, type: row.type });
+    })
     .map((row) => {
       const meta = devices.get(row.device_id);
       const pMax = meta?.pMaxKw ?? row.device_p_max_kw ?? row.p_actual_kw ?? 0;
       const pActual = row.p_actual_kw ?? 0;
       const currentSetpoint = getCurrentSetpoint(row.device_id, row);
       const priority = meta?.priority ?? 1;
+      const soc = clampSoc(row.soc ?? null);
+      const isPhysical = meta?.isPhysical ?? isPhysicalDeviceId(row.device_id);
+      const isSimulated = !isPhysical;
 
       return {
-        device: meta ?? {
-          id: row.device_id,
-          type: row.type,
-          siteId: row.site_id,
-          pMaxKw: pMax,
-        },
-        telemetry: row,
-        currentSetpoint,
-        pActual,
-        pMax,
+        id: row.device_id,
+        type: meta?.type ?? row.type,
+        siteId: meta?.siteId ?? row.site_id,
+        pMaxKw: pMax,
         priority: priority > 0 ? priority : 1,
+        telemetry: row,
+        currentSetpointKw: currentSetpoint,
+        pActualKw: pActual,
+        soc,
+        isPhysical,
+        isSimulated,
       };
     });
 }
 
+// Backwards compatibility for existing tests and callers
+export const prepareEvDevices = prepareDispatchableDevices;
+
 export function reconcileDeviceDeficits(evDevices: DeviceWithTelemetry[]) {
-  const activeDeviceIds = new Set(evDevices.map((ev) => ev.device.id));
+  const activeDeviceIds = new Set(evDevices.map((ev) => ev.id));
   for (const deviceId of [...deviceDeficits.keys()]) {
     if (!activeDeviceIds.has(deviceId)) {
       deviceDeficits.delete(deviceId);
@@ -94,7 +101,8 @@ export function reconcileDeviceDeficits(evDevices: DeviceWithTelemetry[]) {
 
 export function computeAllowedShares(
   evDevices: DeviceWithTelemetry[],
-  availableForEv: number
+  availableForEv: number,
+  params: ControlParams = config.controlParams,
 ): Map<string, number> {
   const allowed = new Map<string, number>();
 
@@ -104,20 +112,25 @@ export function computeAllowedShares(
 
   if (availableForEv <= 0) {
     for (const ev of evDevices) {
-      allowed.set(ev.device.id, 0);
+      allowed.set(ev.id, 0);
     }
     return allowed;
   }
 
-  const getWeight = (ev: DeviceWithTelemetry) =>
-    Math.max(
-      1,
-      Number.isFinite(ev.priority)
-        ? (ev.priority as number)
-        : Number.isFinite(ev.pMax)
-          ? (ev.pMax as number)
-          : 1
-    );
+  const getWeight = (ev: DeviceWithTelemetry) => {
+    const priorityWeight = params.respectPriority
+      ? Math.max(ev.priority, 1) * 1.25
+      : Math.max(ev.priority, 1);
+    const socWeight = (() => {
+      const soc = clampSoc(ev.soc);
+      if (soc === null) return 1;
+      const gap = Math.max(params.targetSoc - soc, 0);
+      const reserve = soc < params.minSocReserve ? 0.5 : 0;
+      return 1 + params.socWeight * (gap + reserve);
+    })();
+
+    return Math.max(1, priorityWeight * socWeight);
+  };
 
   const totalWeight = evDevices.reduce((sum, ev) => sum + getWeight(ev), 0);
   if (totalWeight <= 0) return allowed;
@@ -128,44 +141,44 @@ export function computeAllowedShares(
   // devices that were under-served in previous ticks.
   for (const ev of evDevices) {
     const weight = getWeight(ev);
-    const existing = deviceDeficits.get(ev.device.id) ?? 0;
-    deviceDeficits.set(ev.device.id, existing + weight * quantumPerWeight);
+    const existing = deviceDeficits.get(ev.id) ?? 0;
+    deviceDeficits.set(ev.id, existing + weight * quantumPerWeight);
   }
 
   let remaining = availableForEv;
   const prioritized = [...evDevices].sort((a, b) => {
-    const deficitB = deviceDeficits.get(b.device.id) ?? 0;
-    const deficitA = deviceDeficits.get(a.device.id) ?? 0;
+    const deficitB = deviceDeficits.get(b.id) ?? 0;
+    const deficitA = deviceDeficits.get(a.id) ?? 0;
     if (deficitB !== deficitA) return deficitB - deficitA;
     const weightB = getWeight(b);
     const weightA = getWeight(a);
     if (weightB !== weightA) return weightB - weightA;
-    return a.device.id.localeCompare(b.device.id);
+    return a.id.localeCompare(b.id);
   });
 
   for (const ev of prioritized) {
     if (remaining <= 0) break;
-    const deficit = deviceDeficits.get(ev.device.id) ?? 0;
-    const allocation = Math.min(deficit, ev.pMax, remaining);
+    const deficit = deviceDeficits.get(ev.id) ?? 0;
+    const allocation = Math.min(deficit, ev.pMaxKw, remaining);
     if (allocation > 0) {
-      allowed.set(ev.device.id, allocation);
-      deviceDeficits.set(ev.device.id, deficit - allocation);
+      allowed.set(ev.id, allocation);
+      deviceDeficits.set(ev.id, deficit - allocation);
       remaining -= allocation;
     } else {
-      allowed.set(ev.device.id, 0);
+      allowed.set(ev.id, 0);
     }
   }
 
   if (remaining > 0) {
     for (const ev of prioritized) {
       if (remaining <= 0) break;
-      const current = allowed.get(ev.device.id) ?? 0;
-      const headroom = Math.max(0, ev.pMax - current);
+      const current = allowed.get(ev.id) ?? 0;
+      const headroom = Math.max(0, ev.pMaxKw - current);
       if (headroom <= 0) continue;
       const bonus = Math.min(headroom, remaining);
-      allowed.set(ev.device.id, current + bonus);
-      const deficit = deviceDeficits.get(ev.device.id) ?? 0;
-      deviceDeficits.set(ev.device.id, deficit - bonus);
+      allowed.set(ev.id, current + bonus);
+      const deficit = deviceDeficits.get(ev.id) ?? 0;
+      deviceDeficits.set(ev.id, deficit - bonus);
       remaining -= bonus;
     }
   }
@@ -187,7 +200,7 @@ function applyDrPolicy(
   }
 
   const targetShed = Math.max(program.target_shed_kw ?? 0, 0);
-  const totalEvCapacity = evDevices.reduce((sum, ev) => sum + ev.pMax, 0);
+  const totalEvCapacity = evDevices.reduce((sum, ev) => sum + ev.pMaxKw, 0);
 
   if (program.mode === 'fixed_cap') {
     const shedApplied = Math.min(targetShed, availableForEv);
@@ -301,13 +314,14 @@ export function startControlLoop() {
 
       const totalKw = onlineTelemetry.reduce(
         (sum, row) => sum + (row.p_actual_kw || 0),
-        0
+        0,
       );
-      const evDevices = prepareEvDevices(onlineTelemetry, deviceLookup);
+      const evDevices = prepareDispatchableDevices(onlineTelemetry, deviceLookup);
       reconcileDeviceDeficits(evDevices);
-      const totalEvKw = evDevices.reduce((sum, ev) => sum + ev.pActual, 0);
+      const totalEvKw = evDevices.reduce((sum, ev) => sum + ev.pActualKw, 0);
       const nonEvKw = totalKw - totalEvKw;
-      const availableForEv = Math.max(limitKw - nonEvKw, 0);
+      const feederLimitKw = Math.min(limitKw, config.controlParams.globalKwLimit);
+      const availableForEv = Math.max(feederLimitKw - nonEvKw, 0);
       const activeProgram = await getActiveDrProgram(now);
       const { adjustedAvailable, shedApplied, elasticity } = applyDrPolicy(
         activeProgram,
@@ -317,22 +331,39 @@ export function startControlLoop() {
       const effectiveAvailableForEv = adjustedAvailable;
 
       if (evDevices.length === 0) {
-        console.log('[controlLoop] no EV devices found, skipping control');
+        console.log('[controlLoop] no dispatchable devices found, skipping control');
         return;
+      }
+
+      for (const ev of evDevices) {
+        recordTrackingSample({
+          deviceId: ev.id,
+          type: ev.type,
+          siteId: ev.siteId,
+          priority: ev.priority,
+          soc: ev.soc,
+          isPhysical: ev.isPhysical,
+          setpointKw: ev.currentSetpointKw,
+          actualKw: ev.pActualKw,
+        });
       }
 
       const overloaded = effectiveAvailableForEv < totalEvKw - marginKw;
       const hasHeadroom = effectiveAvailableForEv > totalEvKw + marginKw;
 
-      const allowedShares = computeAllowedShares(evDevices, effectiveAvailableForEv);
+      const allowedShares = computeAllowedShares(
+        evDevices,
+        effectiveAvailableForEv,
+        config.controlParams,
+      );
       const perDeviceImpact = evDevices.map((ev) => {
-        const allowed = allowedShares.get(ev.device.id) ?? ev.currentSetpoint;
-        const utilization = ev.pMax > 0 ? Math.min(Math.max(allowed / ev.pMax, 0), 1) : 0;
-        const priority = priorityLookup.get(ev.device.id) ?? ev.priority ?? 1;
+        const allowed = allowedShares.get(ev.id) ?? ev.currentSetpointKw;
+        const utilization = ev.pMaxKw > 0 ? Math.min(Math.max(allowed / ev.pMaxKw, 0), 1) : 0;
+        const priority = priorityLookup.get(ev.id) ?? ev.priority ?? 1;
         return {
-          deviceId: ev.device.id,
+          deviceId: ev.id,
           allowedKw: allowed,
-          pMax: ev.pMax,
+          pMax: ev.pMaxKw,
           utilizationPct: utilization * 100,
           priority,
         };
@@ -377,18 +408,18 @@ export function startControlLoop() {
       }[] = [];
 
       for (const ev of evDevices) {
-        const previous = deviceSetpoints.get(ev.device.id) ?? ev.currentSetpoint;
+        const previous = deviceSetpoints.get(ev.id) ?? ev.currentSetpointKw;
         let target = previous;
 
-        const allowedShare = allowedShares.get(ev.device.id) ?? 0;
+        const allowedShare = allowedShares.get(ev.id) ?? 0;
 
         if (overloaded) {
           target = allowedShare;
         } else if (hasHeadroom) {
-          target = Math.min(ev.pMax, Math.max(previous + stepKw, allowedShare));
+          target = Math.min(ev.pMaxKw, Math.max(previous + stepKw, allowedShare));
         }
 
-        target = Math.min(Math.max(0, target), ev.pMax);
+        target = Math.min(Math.max(0, target), ev.pMaxKw);
 
         const delta = target - previous;
         let newSetpoint = previous;
@@ -398,20 +429,20 @@ export function startControlLoop() {
           newSetpoint = target;
         }
 
-        newSetpoint = Math.min(Math.max(0, newSetpoint), ev.pMax);
+        newSetpoint = Math.min(Math.max(0, newSetpoint), ev.pMaxKw);
 
         deviceLogs.push({
-          id: ev.device.id,
-          priority: priorityLookup.get(ev.device.id) ?? ev.priority ?? 1,
-          deficit: deviceDeficits.get(ev.device.id) ?? 0,
+          id: ev.id,
+          priority: priorityLookup.get(ev.id) ?? ev.priority ?? 1,
+          deficit: deviceDeficits.get(ev.id) ?? 0,
           allowed: allowedShare,
           prev: previous,
           next: newSetpoint,
-          pMax: ev.pMax,
+          pMax: ev.pMaxKw,
         });
 
         if (Math.abs(newSetpoint - previous) > epsilon) {
-          commands.push({ deviceId: ev.device.id, newSetpoint, prevSetpoint: previous });
+          commands.push({ deviceId: ev.id, newSetpoint, prevSetpoint: previous });
         }
       }
 

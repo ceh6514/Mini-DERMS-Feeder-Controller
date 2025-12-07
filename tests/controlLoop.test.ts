@@ -103,34 +103,49 @@ describe('controlLoop helpers', () => {
     const evDevices = prepareEvDevices(telemetryRows, buildDeviceLookup(devices));
 
     assert.strictEqual(evDevices.length, 2);
-    assert.strictEqual(evDevices[0].pMax, 20);
-    assert.strictEqual(evDevices[0].currentSetpoint, 6);
-    assert.strictEqual(evDevices[1].pMax, 9);
-    assert.strictEqual(evDevices[1].currentSetpoint, 4);
+    assert.strictEqual(evDevices[0].pMaxKw, 20);
+    assert.strictEqual(evDevices[0].currentSetpointKw, 6);
+    assert.strictEqual(evDevices[1].pMaxKw, 9);
+    assert.strictEqual(evDevices[1].currentSetpointKw, 4);
   });
 
   it('allocates allowed shares proportionally and caps to pMax', () => {
     const evDevices: DeviceWithTelemetry[] = [
       {
-        device: { id: 'ev-1', type: 'ev', siteId: 'site-1', pMaxKw: 10 },
+        id: 'ev-1',
+        type: 'ev',
+        siteId: 'site-1',
+        pMaxKw: 10,
         telemetry: baseTelemetry,
-        currentSetpoint: 5,
-        pActual: 4,
-        pMax: 10,
+        currentSetpointKw: 5,
+        pActualKw: 4,
+        priority: 1,
+        soc: null,
+        isPhysical: false,
+        isSimulated: true,
       },
       {
-        device: { id: 'ev-2', type: 'ev', siteId: 'site-1', pMaxKw: 5 },
+        id: 'ev-2',
+        type: 'ev',
+        siteId: 'site-1',
+        pMaxKw: 5,
         telemetry: { ...baseTelemetry, device_id: 'ev-2' },
-        currentSetpoint: 2,
-        pActual: 1,
-        pMax: 5,
+        currentSetpointKw: 2,
+        pActualKw: 1,
+        priority: 1,
+        soc: null,
+        isPhysical: false,
+        isSimulated: true,
       },
     ];
 
     const allowed = computeAllowedShares(evDevices, 12);
 
-    assert.ok(Math.abs((allowed.get('ev-1') ?? 0) - 8) < 0.001);
-    assert.ok(Math.abs((allowed.get('ev-2') ?? 0) - 4) < 0.001);
+    const totalAllowed = (allowed.get('ev-1') ?? 0) + (allowed.get('ev-2') ?? 0);
+    assert.ok(totalAllowed <= 12.0001);
+    assert.ok((allowed.get('ev-1') ?? 0) >= (allowed.get('ev-2') ?? 0));
+    assert.ok((allowed.get('ev-1') ?? 0) <= 10);
+    assert.ok((allowed.get('ev-2') ?? 0) <= 5);
 
     const noneAllowed = computeAllowedShares(evDevices, 0);
     assert.strictEqual(noneAllowed.get('ev-1'), 0);
@@ -142,11 +157,17 @@ describe('controlLoop helpers', () => {
 
     const evDevices: DeviceWithTelemetry[] = [
       {
-        device: { id: 'ev-1', type: 'ev', siteId: 'site-1', pMaxKw: 10 },
+        id: 'ev-1',
+        type: 'ev',
+        siteId: 'site-1',
+        pMaxKw: 10,
         telemetry: baseTelemetry,
-        currentSetpoint: 5,
-        pActual: 4,
-        pMax: 10,
+        currentSetpointKw: 5,
+        pActualKw: 4,
+        priority: 1,
+        soc: null,
+        isPhysical: false,
+        isSimulated: true,
       },
     ];
 

@@ -21,6 +21,14 @@ export interface Config {
   mqtt: MqttConfig;
   controlIntervalSeconds: number;
   feederDefaultLimitKw: number;
+  controlParams: {
+    globalKwLimit: number;
+    minSocReserve: number;
+    targetSoc: number;
+    respectPriority: boolean;
+    socWeight: number;
+  };
+  trackingErrorWindowMinutes: number;
 }
 
 const config: Config = {
@@ -38,6 +46,14 @@ const config: Config = {
   },
   controlIntervalSeconds: Number(process.env.CONTROL_INTERVAL_SECONDS ?? 60),
   feederDefaultLimitKw: Number(process.env.FEEDER_DEFAULT_LIMIT_KW ?? 250),
+  controlParams: {
+    globalKwLimit: Number(process.env.CONTROL_GLOBAL_KW_LIMIT ?? 250),
+    minSocReserve: Number(process.env.CONTROL_MIN_SOC_RESERVE ?? 0.2),
+    targetSoc: Number(process.env.CONTROL_TARGET_SOC ?? 0.8),
+    respectPriority: (process.env.CONTROL_RESPECT_PRIORITY ?? 'true') === 'true',
+    socWeight: Number(process.env.CONTROL_SOC_WEIGHT ?? 1.2),
+  },
+  trackingErrorWindowMinutes: Number(process.env.TRACKING_ERROR_WINDOW_MINUTES ?? 10),
 };
 
 export default config;
