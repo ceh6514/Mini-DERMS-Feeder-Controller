@@ -7,9 +7,11 @@ const assert = require('node:assert/strict');
 const {
   buildDeviceLookup,
   computeAllowedShares,
+  deviceDeficits,
   deviceSetpoints,
   getCurrentSetpoint,
   prepareEvDevices,
+  reconcileDeviceDeficits,
 } = require('../src/controllers/controlLoop');
 
 describe('controlLoop helpers', () => {
@@ -23,6 +25,7 @@ describe('controlLoop helpers', () => {
 
   beforeEach(() => {
     deviceSetpoints.clear();
+    deviceDeficits.clear();
   });
 
   it('builds a lookup by device id', () => {
@@ -111,5 +114,26 @@ describe('controlLoop helpers', () => {
     const noneAllowed = computeAllowedShares(evDevices, 0);
     assert.strictEqual(noneAllowed.get('ev-1'), 0);
     assert.strictEqual(noneAllowed.get('ev-2'), 0);
+  });
+
+  it('drops deficits for devices that are not part of the current tick', () => {
+    deviceDeficits.set('ev-removed', 5);
+
+    const evDevices: DeviceWithTelemetry[] = [
+      {
+        device: { id: 'ev-1', type: 'ev', siteId: 'site-1', pMaxKw: 10 },
+        telemetry: baseTelemetry,
+        currentSetpoint: 5,
+        pActual: 4,
+        pMax: 10,
+      },
+    ];
+
+    reconcileDeviceDeficits(evDevices);
+
+    assert.ok(!deviceDeficits.has('ev-removed'));
+
+    const allowed = computeAllowedShares(evDevices, 5);
+    assert.ok(allowed.get('ev-1') !== undefined);
   });
 });
