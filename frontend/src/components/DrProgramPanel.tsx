@@ -202,7 +202,7 @@ const DrProgramPanel = () => {
             <strong>{impact.avgUtilizationPct.toFixed(1)}%</strong>
           </div>
           <div>
-            <span className="label">Priority-weighted util.</span>
+            <span className="label">Priority-weighted utilization</span>
             <strong>{impact.priorityWeightedUtilizationPct.toFixed(1)}%</strong>
           </div>
         </div>
