@@ -2,9 +2,13 @@ export interface DeviceTelemetry {
   id: number;
   device_id: string;
   ts: string;
+  timestamp?: string;
+  sim_ts?: string;
   type: string;
   p_actual_kw: number;
+  p_actual_w?: number;
   p_setpoint_kw: number | null;
+  p_setpoint_w?: number | null;
   soc: number | null;
   site_id: string;
   device_p_max_kw: number;

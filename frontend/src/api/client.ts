@@ -33,8 +33,8 @@ const BASE_URL =
   `${window.location.protocol}//${window.location.hostname}:3001`;
 
 
-export async function fetchHealth(): Promise<HealthResponse> {
-  const res = await fetch(`${BASE_URL}/api/health`);
+export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
+  const res = await fetch(`${BASE_URL}/api/health`, { signal });
   if (!res.ok) {
     throw new Error('Failed to fetch health status');
   }
@@ -43,8 +43,8 @@ export async function fetchHealth(): Promise<HealthResponse> {
 
 
 // Fetch feeder summary from the backend.
-export async function fetchFeederSummary(): Promise<FeederSummary> {
-  const res = await fetch(`${BASE_URL}/api/feeder/summary`);
+export async function fetchFeederSummary(signal?: AbortSignal): Promise<FeederSummary> {
+  const res = await fetch(`${BASE_URL}/api/feeder/summary`, { signal });
   if (!res.ok) {
     throw new Error('Failed to fetch feeder summary');
   }
@@ -52,8 +52,8 @@ export async function fetchFeederSummary(): Promise<FeederSummary> {
 }
 
 // Fetch devices with their latest telemetry.
-export async function fetchDevices(): Promise<DeviceWithLatest[]> {
-  const res = await fetch(`${BASE_URL}/api/devices`);
+export async function fetchDevices(signal?: AbortSignal): Promise<DeviceWithLatest[]> {
+  const res = await fetch(`${BASE_URL}/api/devices`, { signal });
   if (!res.ok) {
     throw new Error('Failed to fetch devices');
   }
@@ -156,9 +156,12 @@ export async function fetchActiveDrProgramImpact(): Promise<{ program: DrProgram
   return (await res.json()) as { program: DrProgram | null; impact: DrImpactSnapshot | null };
 }
 
-export async function fetchFeederHistory(minutes = 30): Promise<FeederHistoryResponse> {
+export async function fetchFeederHistory(
+  minutes = 30,
+  signal?: AbortSignal,
+): Promise<FeederHistoryResponse> {
   const params = new URLSearchParams({ minutes: String(minutes) });
-  const res = await fetch(`${BASE_URL}/api/feeder/history?` + params.toString());
+  const res = await fetch(`${BASE_URL}/api/feeder/history?` + params.toString(), { signal });
   if (!res.ok) {
     throw new Error(`Failed to fetch feeder history: ${res.status}`);
   }
@@ -218,13 +221,14 @@ export async function sendTelemetry(input: TelemetryInput): Promise<void> {
 export async function fetchAggregatedMetrics(
   window: MetricsWindow,
   bucketMinutes?: number,
+  signal?: AbortSignal,
 ): Promise<AggregatedMetricsResponse> {
   const params = new URLSearchParams({ window });
   if (bucketMinutes) {
     params.set('bucketMinutes', String(bucketMinutes));
   }
 
-  const res = await fetch(`${BASE_URL}/api/feeder/metrics?${params.toString()}`);
+  const res = await fetch(`${BASE_URL}/api/feeder/metrics?${params.toString()}`, { signal });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Failed to fetch aggregated metrics: ${text}`);
@@ -235,6 +239,7 @@ export async function fetchAggregatedMetrics(
 
 export async function fetchTrackingErrors(
   minutes?: number,
+  signal?: AbortSignal,
 ): Promise<DeviceMetrics[]> {
   const params = new URLSearchParams();
   if (minutes) {
@@ -242,6 +247,7 @@ export async function fetchTrackingErrors(
   }
   const res = await fetch(
     `${BASE_URL}/api/metrics/tracking-error${params.size ? `?${params.toString()}` : ''}`,
+    { signal },
   );
   if (!res.ok) {
     const text = await res.text();
