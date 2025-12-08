@@ -4,6 +4,11 @@ export interface ControlParams {
   targetSoc: number;
   respectPriority: boolean;
   socWeight: number;
+  allocationMode?: 'heuristic' | 'optimizer';
+  optimizer?: {
+    enforceTargetSoc?: boolean;
+    solverEnabled?: boolean;
+  };
 }
 
 export interface DeviceState {
