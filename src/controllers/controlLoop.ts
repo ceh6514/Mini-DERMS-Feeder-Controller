@@ -18,6 +18,7 @@ import {
 import { notifyOfflineDevices, notifyStalledLoop } from '../alerting';
 import { recordDrImpact } from '../state/drImpact';
 import { ControlParams, DeviceState } from '../types/control';
+import { optimizeAllocations } from './allocationOptimizer';
 import { clampSoc, computeSocAwareAllocations, isDispatchableDevice } from './scheduler';
 import { recordTrackingSample } from '../state/trackingError';
 
@@ -133,55 +134,116 @@ export function computeAllowedShares(
     return Math.max(1, priorityWeight * socWeight);
   };
 
-  const totalWeight = evDevices.reduce((sum, ev) => sum + getWeight(ev), 0);
+  const weights = new Map<string, number>();
+  const deviceLookup = new Map(evDevices.map((ev) => [ev.id, ev]));
+  for (const ev of evDevices) {
+    weights.set(ev.id, getWeight(ev));
+  }
+
+  const totalWeight = evDevices.reduce((sum, ev) => sum + (weights.get(ev.id) ?? 0), 0);
   if (totalWeight <= 0) return allowed;
 
   const quantumPerWeight = availableForEv / totalWeight;
 
-  // Accrue new credit based on weight, then allocate in deficit order to compensate
-  // devices that were under-served in previous ticks.
   for (const ev of evDevices) {
-    const weight = getWeight(ev);
+    const weight = weights.get(ev.id) ?? 0;
     const existing = deviceDeficits.get(ev.id) ?? 0;
     deviceDeficits.set(ev.id, existing + weight * quantumPerWeight);
   }
 
-  let remaining = availableForEv;
-  const prioritized = [...evDevices].sort((a, b) => {
-    const deficitB = deviceDeficits.get(b.id) ?? 0;
-    const deficitA = deviceDeficits.get(a.id) ?? 0;
-    if (deficitB !== deficitA) return deficitB - deficitA;
-    const weightB = getWeight(b);
-    const weightA = getWeight(a);
-    if (weightB !== weightA) return weightB - weightA;
-    return a.id.localeCompare(b.id);
-  });
+  const objectiveWeights = new Map(
+    evDevices.map((ev) => [
+      ev.id,
+      {
+        weight: weights.get(ev.id) ?? 1,
+        deficitBoost: (deviceDeficits.get(ev.id) ?? 0) / Math.max(ev.pMaxKw, 1),
+      },
+    ]),
+  );
 
-  for (const ev of prioritized) {
-    if (remaining <= 0) break;
-    const deficit = deviceDeficits.get(ev.id) ?? 0;
-    const allocation = Math.min(deficit, ev.pMaxKw, remaining);
-    if (allocation > 0) {
-      allowed.set(ev.id, allocation);
-      deviceDeficits.set(ev.id, deficit - allocation);
-      remaining -= allocation;
-    } else {
-      allowed.set(ev.id, 0);
+  const mode = params.allocationMode ?? 'heuristic';
+  let usedOptimizer = false;
+  if (mode === 'optimizer') {
+    const result = optimizeAllocations(evDevices, availableForEv, params, objectiveWeights);
+    usedOptimizer = result.feasible;
+    if (!result.feasible && result.message) {
+      console.warn('[controlLoop] optimizer infeasible, falling back to heuristic', {
+        reason: result.message,
+      });
+    }
+    if (result.allocations.size > 0) {
+      for (const [deviceId, value] of result.allocations.entries()) {
+        const device = deviceLookup.get(deviceId);
+        const cap = device ? Math.max(device.pMaxKw, 0) : Infinity;
+        allowed.set(deviceId, Math.min(Math.max(0, value), cap));
+      }
     }
   }
 
-  if (remaining > 0) {
+  if (mode !== 'optimizer' || !usedOptimizer) {
+    let remaining = availableForEv;
+    const prioritized = [...evDevices].sort((a, b) => {
+      const deficitB = deviceDeficits.get(b.id) ?? 0;
+      const deficitA = deviceDeficits.get(a.id) ?? 0;
+      if (deficitB !== deficitA) return deficitB - deficitA;
+      const weightB = weights.get(b.id) ?? 0;
+      const weightA = weights.get(a.id) ?? 0;
+      if (weightB !== weightA) return weightB - weightA;
+      return a.id.localeCompare(b.id);
+    });
+
     for (const ev of prioritized) {
       if (remaining <= 0) break;
-      const current = allowed.get(ev.id) ?? 0;
-      const headroom = Math.max(0, ev.pMaxKw - current);
-      if (headroom <= 0) continue;
-      const bonus = Math.min(headroom, remaining);
-      allowed.set(ev.id, current + bonus);
       const deficit = deviceDeficits.get(ev.id) ?? 0;
-      deviceDeficits.set(ev.id, deficit - bonus);
-      remaining -= bonus;
+      const allocation = Math.min(deficit, ev.pMaxKw, remaining);
+      if (allocation > 0) {
+        allowed.set(ev.id, allocation);
+        deviceDeficits.set(ev.id, deficit - allocation);
+        remaining -= allocation;
+      } else {
+        allowed.set(ev.id, 0);
+      }
     }
+
+    if (remaining > 0) {
+      for (const ev of prioritized) {
+        if (remaining <= 0) break;
+        const current = allowed.get(ev.id) ?? 0;
+        const headroom = Math.max(0, ev.pMaxKw - current);
+        if (headroom <= 0) continue;
+        const bonus = Math.min(headroom, remaining);
+        allowed.set(ev.id, current + bonus);
+        const deficit = deviceDeficits.get(ev.id) ?? 0;
+        deviceDeficits.set(ev.id, deficit - bonus);
+        remaining -= bonus;
+      }
+    }
+  }
+
+  for (const ev of evDevices) {
+    if (!allowed.has(ev.id)) {
+      allowed.set(ev.id, 0);
+    }
+    const current = deviceDeficits.get(ev.id) ?? 0;
+    const used = allowed.get(ev.id) ?? 0;
+    deviceDeficits.set(ev.id, Math.max(0, current - used));
+  }
+
+  const totalCap = evDevices.reduce((sum, ev) => {
+    const soc = clampSoc(ev.soc);
+    const enforceTarget = params.optimizer?.enforceTargetSoc ?? true;
+    const eligible = enforceTarget && soc !== null && soc >= params.targetSoc ? 0 : ev.pMaxKw;
+    return sum + Math.max(0, eligible);
+  }, 0);
+
+  const totalAllowed = [...allowed.values()].reduce((sum, val) => sum + val, 0);
+  if (mode === 'optimizer' && usedOptimizer && totalAllowed + 0.01 < Math.min(availableForEv, totalCap)) {
+    console.warn('[controlLoop] optimizer could not fully utilize available headroom', {
+      availableForEv,
+      totalCap,
+      allocated: totalAllowed,
+      usedOptimizer,
+    });
   }
 
   return allowed;

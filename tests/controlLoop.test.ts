@@ -13,6 +13,7 @@ const {
   prepareEvDevices,
   reconcileDeviceDeficits,
 } = require('../src/controllers/controlLoop');
+const { optimizeAllocations } = require('../src/controllers/allocationOptimizer');
 
 describe('controlLoop helpers', () => {
   const baseTelemetry: TelemetryRow = {
@@ -181,5 +182,114 @@ describe('controlLoop helpers', () => {
 
     const allowed = computeAllowedShares(evDevices, 5);
     assert.ok(allowed.get('ev-1') !== undefined);
+  });
+
+  it('optimizes allocations when optimizer mode is enabled', () => {
+    const evDevices: DeviceWithTelemetry[] = [
+      {
+        id: 'ev-low-priority',
+        type: 'ev',
+        siteId: 'site-1',
+        feederId: 'feeder-1',
+        pMaxKw: 10,
+        telemetry: { ...baseTelemetry, device_id: 'ev-low-priority', soc: 0.2 },
+        currentSetpointKw: 2,
+        pActualKw: 1,
+        priority: 1,
+        soc: 0.2,
+        isPhysical: false,
+        isSimulated: true,
+      },
+      {
+        id: 'ev-high-priority',
+        type: 'ev',
+        siteId: 'site-1',
+        feederId: 'feeder-1',
+        pMaxKw: 8,
+        telemetry: { ...baseTelemetry, device_id: 'ev-high-priority', soc: 0.5 },
+        currentSetpointKw: 1,
+        pActualKw: 1,
+        priority: 2,
+        soc: 0.5,
+        isPhysical: false,
+        isSimulated: true,
+      },
+      {
+        id: 'ev-at-target',
+        type: 'ev',
+        siteId: 'site-1',
+        feederId: 'feeder-1',
+        pMaxKw: 15,
+        telemetry: { ...baseTelemetry, device_id: 'ev-at-target', soc: 0.9 },
+        currentSetpointKw: 3,
+        pActualKw: 3,
+        priority: 3,
+        soc: 0.9,
+        isPhysical: false,
+        isSimulated: true,
+      },
+    ];
+
+    const params = {
+      globalKwLimit: 250,
+      minSocReserve: 0.2,
+      targetSoc: 0.8,
+      respectPriority: true,
+      socWeight: 1,
+      allocationMode: 'optimizer' as const,
+      optimizer: { enforceTargetSoc: true, solverEnabled: false },
+    };
+
+    const allowed = computeAllowedShares(evDevices, 12, params);
+
+    assert.strictEqual(Math.round((allowed.get('ev-at-target') ?? 0) * 100), 0);
+    assert.ok((allowed.get('ev-high-priority') ?? 0) >= 7.9);
+    assert.ok((allowed.get('ev-low-priority') ?? 0) <= 4.1);
+  });
+
+  it('surfaces infeasible optimizer outcomes from external solvers', () => {
+    const evDevices: DeviceWithTelemetry[] = [
+      {
+        id: 'ev-1',
+        type: 'ev',
+        siteId: 'site-1',
+        feederId: 'feeder-1',
+        pMaxKw: 5,
+        telemetry: baseTelemetry,
+        currentSetpointKw: 2,
+        pActualKw: 1,
+        priority: 1,
+        soc: 0.4,
+        isPhysical: false,
+        isSimulated: true,
+      },
+    ];
+
+    const params = {
+      globalKwLimit: 250,
+      minSocReserve: 0.2,
+      targetSoc: 0.8,
+      respectPriority: true,
+      socWeight: 1,
+      allocationMode: 'optimizer' as const,
+      optimizer: { enforceTargetSoc: true, solverEnabled: true },
+    };
+
+    const objectives = new Map([
+      [
+        'ev-1',
+        {
+          weight: 1,
+          deficitBoost: 0,
+        },
+      ],
+    ]);
+
+    const result = optimizeAllocations(evDevices, 5, params, objectives, {
+      Solve: () => ({ feasible: false }),
+    });
+
+    assert.strictEqual(result.feasible, false);
+    assert.strictEqual(result.usedExternal, true);
   });
 });

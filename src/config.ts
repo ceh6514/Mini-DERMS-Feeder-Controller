@@ -28,6 +28,11 @@ export interface Config {
     targetSoc: number;
     respectPriority: boolean;
     socWeight: number;
+    allocationMode?: 'heuristic' | 'optimizer';
+    optimizer?: {
+      enforceTargetSoc?: boolean;
+      solverEnabled?: boolean;
+    };
   };
   trackingErrorWindowMinutes: number;
   auth: {
@@ -91,6 +96,17 @@ const config: Config = {
     targetSoc: Number(process.env.CONTROL_TARGET_SOC ?? 0.8),
     respectPriority: (process.env.CONTROL_RESPECT_PRIORITY ?? 'true') === 'true',
     socWeight: Number(process.env.CONTROL_SOC_WEIGHT ?? 1.2),
+    allocationMode: (process.env.CONTROL_ALLOCATION_MODE ?? 'heuristic')
+      .toLowerCase()
+      .startsWith('opt')
+      ? 'optimizer'
+      : 'heuristic',
+    optimizer: {
+      enforceTargetSoc:
+        (process.env.CONTROL_OPTIMIZER_ENFORCE_TARGET_SOC ?? 'true').toLowerCase() === 'true',
+      solverEnabled:
+        (process.env.CONTROL_OPTIMIZER_SOLVER_ENABLED ?? 'false').toLowerCase() === 'true',
+    },
   },
   trackingErrorWindowMinutes: Number(process.env.TRACKING_ERROR_WINDOW_MINUTES ?? 10),
   auth: {
