@@ -13,14 +13,18 @@ router.get('/metrics/tracking-error', async (req, res) => {
     const windowMinutes = Number.isFinite(minutesParam) && minutesParam > 0
       ? minutesParam
       : config.trackingErrorWindowMinutes;
+    const feederId = typeof req.query.feederId === 'string' ? req.query.feederId : undefined;
 
     const [inMemory, dbMetrics, devices] = await Promise.all([
-      getTrackingMetrics(windowMinutes),
-      getTrackingErrorWindow(windowMinutes),
+      getTrackingMetrics(windowMinutes, feederId),
+      getTrackingErrorWindow(windowMinutes, feederId),
       getAllDevices(),
     ]);
 
-    const deviceLookup = new Map(devices.map((d) => [d.id, d]));
+    const relevantDevices = feederId
+      ? devices.filter((device) => device.feederId === feederId)
+      : devices;
+    const deviceLookup = new Map(relevantDevices.map((d) => [d.id, d]));
     const merged = new Map<string, DeviceMetrics>();
 
     for (const metric of dbMetrics) {

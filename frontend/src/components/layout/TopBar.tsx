@@ -1,17 +1,24 @@
 import React from 'react';
-import { FeederSummary, HealthResponse } from '../../api/types';
+import { FeederInfo, FeederSummary, HealthResponse } from '../../api/types';
 import LineIcon from '../icons/LineIcon';
 
 interface TopBarProps {
   summary: FeederSummary | null;
   health: HealthResponse | null;
   theme: 'day' | 'night';
+  feeders: FeederInfo[];
+  selectedFeederId: string | null;
+  onFeederChange: (feederId: string) => void;
 }
 
-const TopBar: React.FC<TopBarProps> = ({ summary, health, theme }) => {
+const TopBar: React.FC<TopBarProps> = ({ summary, health, theme, feeders, selectedFeederId, onFeederChange }) => {
   const offlineCount = health?.controlLoop.offlineCount ?? 0;
   const loopStatus = health?.controlLoop.status ?? 'idle';
   const loopBadge = loopStatus === 'ok' ? 'success' : loopStatus === 'idle' ? 'warning' : 'danger';
+
+  const feederOptions = feeders.length
+    ? feeders
+    : [{ feederId: summary?.feederId ?? 'default-feeder', parentFeederId: null, deviceCount: summary?.deviceCount ?? 0 }];
 
   return (
     <div className="topbar">
@@ -22,6 +29,21 @@ const TopBar: React.FC<TopBarProps> = ({ summary, health, theme }) => {
             <LineIcon name={theme === 'day' ? 'sun' : 'moon'} size={16} />
             {theme === 'day' ? 'Day profile' : 'Night profile'}
           </span>
+          <label className="pill" style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+            <LineIcon name="network" size={16} />
+            <span>Feeder</span>
+            <select
+              value={selectedFeederId ?? feederOptions[0]?.feederId}
+              onChange={(e) => onFeederChange(e.target.value)}
+              className="pill-select"
+            >
+              {feederOptions.map((feeder) => (
+                <option key={feeder.feederId} value={feeder.feederId}>
+                  {feeder.feederId} ({feeder.deviceCount})
+                </option>
+              ))}
+            </select>
+          </label>
           {summary && (
             <span className="pill">
               {summary.deviceCount} devices • Limit {summary.limitKw.toFixed(1)} kW

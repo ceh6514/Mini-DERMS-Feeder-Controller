@@ -200,6 +200,19 @@ body[data-theme='night'] .starfield { opacity: 0.6; }
 .pill.success { background: rgba(47, 122, 107, 0.14); color: var(--color-accent-strong); border-color: rgba(47, 122, 107, 0.2); }
 .pill.warning { background: rgba(210, 138, 60, 0.12); color: var(--color-warning); border-color: rgba(210, 138, 60, 0.2); }
 
+.pill-select {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-weight: var(--font-weight-strong);
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--radius-sm);
+}
+
+.pill-select:focus {
+  outline: 2px solid var(--color-border-strong);
+}
+
 .badge {
   display: inline-flex;
   align-items: center;

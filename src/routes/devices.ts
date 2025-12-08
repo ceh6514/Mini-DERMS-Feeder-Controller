@@ -16,11 +16,16 @@ import {
 
 const router = Router();
 
-router.get('/devices', async (_req, res) => {
+router.get('/devices', async (req, res) => {
+  const feederId = typeof req.query.feederId === 'string' ? req.query.feederId : undefined;
   const [devices, latestTelemetry] = await Promise.all([
     getAllDevices(),
-    getLatestTelemetryPerDevice(),
+    getLatestTelemetryPerDevice(feederId),
   ]);
+
+  const filteredDevices = feederId
+    ? devices.filter((device) => device.feederId === feederId)
+    : devices;
 
   const latestByDevice = latestTelemetry.reduce<Record<string, unknown>>((acc, row) => {
     acc[row.device_id] = row;
@@ -28,7 +33,7 @@ router.get('/devices', async (_req, res) => {
   }, {});
 
   res.json(
-    devices.map((d) => {
+    filteredDevices.map((d) => {
       const isPi = d.id.startsWith('pi-') || Boolean(d.isPhysical);
       const isSimulated =
         !isPi && (d.id.startsWith('pv-') || d.id.startsWith('bat-') || d.id.startsWith('ev-'));
@@ -76,11 +81,13 @@ router.post('/telemetry', async (req, res) => {
     const device = await getDeviceById(telemetry.deviceId);
     const type = device?.type ?? telemetry.type;
     const siteId = device?.siteId ?? telemetry.siteId;
+    const feederId = telemetry.feederId ?? device?.feederId ?? null;
 
     await upsertDevice({
       id: telemetry.deviceId,
       type,
       siteId,
+      feederId: feederId ?? siteId,
       pMaxKw: telemetry.pMaxKw,
       priority: telemetry.priority,
       isPhysical: isPhysicalDeviceId(telemetry.deviceId),
@@ -96,6 +103,7 @@ router.post('/telemetry', async (req, res) => {
       p_setpoint_kw: telemetry.pSetpointKw,
       soc: telemetry.soc,
       site_id: siteId,
+      feeder_id: feederId ?? siteId,
     });
 
     res.status(201).json({ status: 'ok' });
@@ -113,7 +121,8 @@ router.get('/live-devices', async (req, res) => {
   try {
     const minutesParam = Number(req.query.minutes ?? 2);
     const minutes = Number.isFinite(minutesParam) && minutesParam > 0 ? minutesParam : 2;
-    const devices = await getLiveDevices(minutes);
+    const feederId = typeof req.query.feederId === 'string' ? req.query.feederId : undefined;
+    const devices = await getLiveDevices(minutes, feederId);
     res.json(devices);
   } catch (err) {
     console.error('[live-devices] failed to load recent devices', err);

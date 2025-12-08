@@ -1,6 +1,7 @@
 import { query } from '../db';
 import { DeviceMetrics } from '../types/control';
 import { getCurrentFeederLimit } from './eventsRepo';
+import config from '../config';
 
 export interface TelemetryRow {
   id?: number;
@@ -11,6 +12,7 @@ export interface TelemetryRow {
   p_setpoint_kw?: number | null;
   soc?: number | null;
   site_id: string;
+  feeder_id: string;
   device_p_max_kw?: number;
   cloud_cover_pct?: number;
   shortwave_radiation_wm2?: number;
@@ -56,10 +58,15 @@ export interface SocTrajectoryPoint {
   soc: number;
 }
 
+function normalizeFeederId(feederId?: string | null): string {
+  return feederId?.trim() || config.defaultFeederId;
+}
+
 export interface AggregatedMetrics {
   window: MetricsWindow;
   rangeStart: string;
   rangeEnd: string;
+  feederId: string;
   feeder: {
     avgKw: number;
     maxKw: number;
@@ -76,6 +83,7 @@ export interface LiveDeviceRow {
   deviceId: string;
   type: string;
   siteId: string;
+  feederId: string;
   pMaxKw: number;
   priority: number | null;
   isPhysical: boolean;
@@ -86,6 +94,7 @@ export interface LiveDeviceRow {
 }
 
 export async function insertTelemetry(row: TelemetryRow): Promise<void> {
+  const feederId = normalizeFeederId(row.feeder_id);
   const text = `
     INSERT INTO telemetry (
       device_id,
@@ -95,11 +104,12 @@ export async function insertTelemetry(row: TelemetryRow): Promise<void> {
       p_setpoint_kw,
       soc,
       site_id,
+      feeder_id,
       cloud_cover_pct,
       shortwave_radiation_wm2,
       estimated_power_w
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
   `;
   await query(text, [
     row.device_id,
@@ -109,13 +119,15 @@ export async function insertTelemetry(row: TelemetryRow): Promise<void> {
     row.p_setpoint_kw ?? null,
     row.soc ?? null,
     row.site_id,
+    feederId,
     row.cloud_cover_pct ?? 0,
     row.shortwave_radiation_wm2 ?? 0,
     row.estimated_power_w ?? 0,
   ]);
 }
 
-export async function getLatestTelemetryPerDevice(): Promise<TelemetryRow[]> {
+export async function getLatestTelemetryPerDevice(feederId?: string): Promise<TelemetryRow[]> {
+  const resolvedFeeder = normalizeFeederId(feederId);
   const text = `
     SELECT DISTINCT ON (t.device_id)
       t.id,
@@ -126,24 +138,31 @@ export async function getLatestTelemetryPerDevice(): Promise<TelemetryRow[]> {
       t.p_setpoint_kw,
       t.soc,
       t.site_id,
+      t.feeder_id,
       d.p_max_kw AS device_p_max_kw,
       t.cloud_cover_pct,
       t.shortwave_radiation_wm2,
       t.estimated_power_w
     FROM telemetry t
     JOIN devices d ON d.id = t.device_id
+    WHERE t.feeder_id = $1
     ORDER BY t.device_id, t.ts DESC;
   `;
-  const { rows } = await query<TelemetryRow>(text);
+  const { rows } = await query<TelemetryRow>(text, [resolvedFeeder]);
   return rows;
 }
 
-export async function getLiveDevices(minutes = 2): Promise<LiveDeviceRow[]> {
+export async function getLiveDevices(
+  minutes = 2,
+  feederId?: string,
+): Promise<LiveDeviceRow[]> {
+  const resolvedFeeder = normalizeFeederId(feederId);
   const text = `
     SELECT DISTINCT ON (t.device_id)
       t.device_id AS "deviceId",
       d.type,
       d.site_id AS "siteId",
+      d.feeder_id AS "feederId",
       d.p_max_kw AS "pMaxKw",
       d.priority,
       d.is_physical AS "isPhysical",
@@ -154,10 +173,11 @@ export async function getLiveDevices(minutes = 2): Promise<LiveDeviceRow[]> {
     FROM telemetry t
     JOIN devices d ON d.id = t.device_id
     WHERE t.ts >= NOW() - ($1 || ' minutes')::INTERVAL
+      AND t.feeder_id = $2
     ORDER BY t.device_id, t.ts DESC;
   `;
 
-  const { rows } = await query<LiveDeviceRow>(text, [minutes]);
+  const { rows } = await query<LiveDeviceRow>(text, [minutes, resolvedFeeder]);
   return rows.map((row) => ({
     ...row,
     lastSeen: row.lastSeen instanceof Date ? row.lastSeen : new Date(row.lastSeen),
@@ -167,12 +187,15 @@ export async function getLiveDevices(minutes = 2): Promise<LiveDeviceRow[]> {
 
 export async function getTrackingErrorWindow(
   windowMinutes: number,
+  feederId?: string,
 ): Promise<DeviceMetrics[]> {
+  const resolvedFeeder = normalizeFeederId(feederId);
   const text = `
     SELECT
       t.device_id AS "deviceId",
       d.type,
       d.site_id AS "siteId",
+      t.feeder_id AS "feederId",
       d.priority,
       d.is_physical AS "isPhysical",
       t.ts,
@@ -182,6 +205,7 @@ export async function getTrackingErrorWindow(
     FROM telemetry t
     JOIN devices d ON d.id = t.device_id
     WHERE t.ts >= NOW() - ($1 || ' minutes')::INTERVAL
+      AND t.feeder_id = $2
     ORDER BY t.device_id, t.ts DESC;
   `;
 
@@ -189,13 +213,14 @@ export async function getTrackingErrorWindow(
     deviceId: string;
     type: string;
     siteId: string;
+    feederId: string;
     priority: number | null;
     isPhysical: boolean;
     ts: Date;
     p_actual_kw: number | null;
     p_setpoint_kw: number | null;
     soc: number | null;
-  }>(text, [windowMinutes]);
+  }>(text, [windowMinutes, resolvedFeeder]);
 
   const aggregates = new Map<string, {
     totalError: number;
@@ -205,6 +230,7 @@ export async function getTrackingErrorWindow(
     soc: number | null;
     type: string;
     siteId: string;
+    feederId: string;
     priority: number;
     isPhysical: boolean;
   }>();
@@ -228,6 +254,7 @@ export async function getTrackingErrorWindow(
         soc: row.soc ?? null,
         type: row.type,
         siteId: row.siteId,
+        feederId: row.feederId,
         priority,
         isPhysical: Boolean(row.isPhysical),
       });
@@ -241,6 +268,7 @@ export async function getTrackingErrorWindow(
     deviceId,
     type: agg.type,
     siteId: agg.siteId,
+    feederId: agg.feederId,
     priority: agg.priority,
     soc: agg.soc,
     isPhysical: agg.isPhysical,
@@ -261,6 +289,7 @@ export async function getRecentTelemetry(deviceId: string, limit = 100): Promise
       p_setpoint_kw,
       soc,
       site_id,
+      feeder_id,
       cloud_cover_pct,
       shortwave_radiation_wm2,
       estimated_power_w
@@ -276,6 +305,7 @@ export async function getRecentTelemetry(deviceId: string, limit = 100): Promise
 export async function getLatestSolarWeatherSample(
   feederId: string,
 ): Promise<SolarWeatherSample | null> {
+  const resolvedFeeder = normalizeFeederId(feederId);
   const text = `
     SELECT
       device_id,
@@ -284,7 +314,7 @@ export async function getLatestSolarWeatherSample(
       shortwave_radiation_wm2,
       estimated_power_w
     FROM telemetry
-    WHERE device_id = $1 AND type = 'solar_weather'
+    WHERE feeder_id = $1 AND type = 'solar_weather'
     ORDER BY ts DESC
     LIMIT 1;
   `;
@@ -295,7 +325,7 @@ export async function getLatestSolarWeatherSample(
     cloud_cover_pct: number;
     shortwave_radiation_wm2: number;
     estimated_power_w: number;
-  }>(text, [feederId]);
+  }>(text, [resolvedFeeder]);
 
   if (!rows[0]) {
     return null;
@@ -303,7 +333,7 @@ export async function getLatestSolarWeatherSample(
 
   const row = rows[0];
   return {
-    feederId: row.device_id,
+    feederId: resolvedFeeder,
     timestamp: row.ts instanceof Date ? row.ts.toISOString() : new Date(row.ts).toISOString(),
     cloudCoverPct: Number(row.cloud_cover_pct ?? 0),
     shortwaveRadiationWm2: Number(row.shortwave_radiation_wm2 ?? 0),
@@ -318,13 +348,14 @@ export async function saveSolarWeatherSample(sample: {
   shortwaveRadiationWm2: number;
   estimatedPowerW: number;
 }): Promise<void> {
+  const feederId = normalizeFeederId(sample.feederId);
   const siteIdQuery = `
     SELECT site_id
     FROM devices
-    WHERE id = $1
+    WHERE feeder_id = $1
     LIMIT 1;
   `;
-  const { rows } = await query<{ site_id: string }>(siteIdQuery, [sample.feederId]);
+  const { rows } = await query<{ site_id: string }>(siteIdQuery, [feederId]);
   const siteId = rows[0]?.site_id;
 
   if (!siteId) {
@@ -341,18 +372,20 @@ export async function saveSolarWeatherSample(sample: {
         p_setpoint_kw,
         soc,
         site_id,
+        feeder_id,
         cloud_cover_pct,
         shortwave_radiation_wm2,
         estimated_power_w
       )
-      VALUES ($1, $2, $3, $4, NULL, NULL, $5, $6, $7, $8);
+      VALUES ($1, $2, $3, $4, NULL, NULL, $5, $6, $7, $8, $9);
     `,
     [
-      sample.feederId,
+      feederId,
       new Date(sample.timestamp),
       'solar_weather',
       sample.estimatedPowerW / 1000,
       siteId,
+      feederId,
       sample.cloudCoverPct,
       sample.shortwaveRadiationWm2,
       sample.estimatedPowerW,
@@ -369,9 +402,11 @@ export async function saveSolarWeatherSample(sample: {
 export async function getFeederHistory(options?: {
   minutes?: number;
   bucketSeconds?: number;
+  feederId?: string;
 }): Promise<FeederHistoryPoint[]> {
   const minutes = options?.minutes ?? 30;
   const bucketSeconds = options?.bucketSeconds ?? 60;
+  const feederId = normalizeFeederId(options?.feederId);
 
   // Calculate the start time once to avoid clock drift during the query.
   const windowStart = new Date(Date.now() - minutes * 60 * 1000);
@@ -382,11 +417,12 @@ export async function getFeederHistory(options?: {
       SUM(p_actual_kw) AS total_kw
     FROM telemetry
     WHERE ts >= $1
+      AND feeder_id = $3
     GROUP BY ts
     ORDER BY ts ASC;
   `;
 
-  const { rows } = await query<FeederHistoryPoint>(text, [windowStart, bucketSeconds]);
+  const { rows } = await query<FeederHistoryPoint>(text, [windowStart, bucketSeconds, feederId]);
   return rows.map((row) => ({ ts: new Date(row.ts), total_kw: Number(row.total_kw) }));
 }
 
@@ -423,9 +459,11 @@ function calculateFairness(values: number[]): number {
 export async function getAggregatedMetrics(
   window: MetricsWindow,
   bucketMinutes?: number,
+  feederId?: string,
 ): Promise<AggregatedMetrics> {
   const bucketSeconds = (bucketMinutes ?? (window === 'day' ? 30 : window === 'week' ? 60 : 120)) * 60;
   const rangeStart = getWindowStart(window);
+  const resolvedFeeder = normalizeFeederId(feederId);
 
   const bucketedQuery = `
     SELECT
@@ -450,7 +488,7 @@ export async function getAggregatedMetrics(
       ) AS requested_kw
     FROM telemetry t
     JOIN devices d ON d.id = t.device_id
-    WHERE t.ts >= $1 AND t.type <> 'solar_weather'
+    WHERE t.ts >= $1 AND t.type <> 'solar_weather' AND t.feeder_id = $3
     GROUP BY bucket_ts, t.device_id, d.type
     ORDER BY bucket_ts ASC;
   `;
@@ -465,20 +503,21 @@ export async function getAggregatedMetrics(
     avg_setpoint_kw: number | null;
     curtailment_kw: number | null;
     requested_kw: number | null;
-  }>(bucketedQuery, [rangeStart, bucketSeconds]);
+  }>(bucketedQuery, [rangeStart, bucketSeconds, resolvedFeeder]);
 
   const slaQuery = `
     SELECT COUNT(*) AS violations
     FROM telemetry
     WHERE ts >= $1
       AND type <> 'solar_weather'
+      AND feeder_id = $2
       AND (
         (soc IS NOT NULL AND soc < 0.2)
         OR (p_setpoint_kw IS NOT NULL AND p_actual_kw - p_setpoint_kw > 0.01)
       );
   `;
 
-  const slaResult = await query<{ violations: string }>(slaQuery, [rangeStart]);
+  const slaResult = await query<{ violations: string }>(slaQuery, [rangeStart, resolvedFeeder]);
   const slaViolations = Number(slaResult.rows[0]?.violations ?? 0);
 
   const deviceMap = new Map<string, DeviceAggregate & { requested: number; curtailed: number }>();
@@ -521,7 +560,7 @@ export async function getAggregatedMetrics(
   let bucketCount = 0;
   let maxKw = 0;
 
-  const limitKw = await getCurrentFeederLimit(new Date());
+  const limitKw = await getCurrentFeederLimit(new Date(), resolvedFeeder);
 
   const socTrajectories: SocTrajectoryPoint[] = [];
 
@@ -588,6 +627,7 @@ export async function getAggregatedMetrics(
     window,
     rangeStart: rangeStart.toISOString(),
     rangeEnd: new Date().toISOString(),
+    feederId: resolvedFeeder,
     feeder: {
       avgKw,
       maxKw,

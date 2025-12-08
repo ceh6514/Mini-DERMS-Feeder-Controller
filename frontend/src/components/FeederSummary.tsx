@@ -25,7 +25,7 @@ const FeederSummaryCard = ({ summary, metrics }: Props) => {
 
   return (
     <div className="card">
-      <h2>Feeder Summary</h2>
+      <h2>Feeder Summary {summary.feederId ? `· ${summary.feederId}` : ''}</h2>
       <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
         <div>
           <p className="subtitle">Current Output</p>

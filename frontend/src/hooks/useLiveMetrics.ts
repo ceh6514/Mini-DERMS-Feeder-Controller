@@ -27,7 +27,7 @@ interface LiveMetricsState {
   error: string | null;
 }
 
-export function useLiveMetrics(pollMs = 1500): LiveMetricsState {
+export function useLiveMetrics(feederId?: string, pollMs = 1500): LiveMetricsState {
   const [state, setState] = useState<LiveMetricsState>({
     summary: null,
     devices: [],
@@ -44,20 +44,21 @@ export function useLiveMetrics(pollMs = 1500): LiveMetricsState {
   const mountedRef = useRef(true);
   const inflightRef = useRef(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (feederId?: string) => {
     if (inflightRef.current) return;
     inflightRef.current = true;
 
     abortRef.current = new AbortController();
+    setState((prev) => ({ ...prev, loading: true }));
 
     try {
       const [summary, devices, health, history, tracking, aggregated] = await Promise.all([
-        fetchFeederSummary(abortRef.current.signal),
-        fetchDevices(abortRef.current.signal),
+        fetchFeederSummary(feederId, abortRef.current.signal),
+        fetchDevices(feederId, abortRef.current.signal),
         fetchHealth(abortRef.current.signal),
-        fetchFeederHistory(30, abortRef.current.signal),
-        fetchTrackingErrors(undefined, abortRef.current.signal),
-        fetchAggregatedMetrics('day', undefined, abortRef.current.signal),
+        fetchFeederHistory(30, feederId, abortRef.current.signal),
+        fetchTrackingErrors(undefined, feederId, abortRef.current.signal),
+        fetchAggregatedMetrics('day', undefined, feederId, abortRef.current.signal),
       ]);
       if (!mountedRef.current) return;
       setState({
@@ -84,18 +85,18 @@ export function useLiveMetrics(pollMs = 1500): LiveMetricsState {
 
     const tick = async () => {
       if (document.visibilityState === 'visible') {
-        await load();
+        await load(feederId);
       }
       timerRef.current = window.setTimeout(tick, pollMs);
     };
 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        void load();
+        void load(feederId);
       }
     };
 
-    void load();
+    void load(feederId);
     timerRef.current = window.setTimeout(tick, pollMs);
     document.addEventListener('visibilitychange', handleVisibility);
 
@@ -107,7 +108,7 @@ export function useLiveMetrics(pollMs = 1500): LiveMetricsState {
       abortRef.current?.abort();
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [load, pollMs]);
+  }, [feederId, load, pollMs]);
 
   return state;
 }

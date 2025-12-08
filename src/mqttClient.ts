@@ -1,4 +1,4 @@
-import mqtt, { MqttClient } from 'mqtt';
+import mqtt from 'mqtt';
 import config from './config';
 import { upsertDevice } from './repositories/devicesRepo';
 import { insertTelemetry } from './repositories/telemetryRepo';
@@ -8,7 +8,7 @@ import {
   validateTelemetryPayload,
 } from './validation/telemetry';
 
-export let mqttClient: MqttClient | null = null;
+export let mqttClient: any = null;
 let lastError: string | null = null;
 
 /**
@@ -26,6 +26,7 @@ async function parseAndStoreMessage(topic: string, payload: Buffer) {
       id: telemetry.deviceId,
       type: telemetry.type,
       siteId: telemetry.siteId,
+      feederId: telemetry.feederId ?? telemetry.siteId ?? config.defaultFeederId,
       pMaxKw: telemetry.pMaxKw,
       priority: telemetry.priority,
     });
@@ -41,6 +42,7 @@ async function parseAndStoreMessage(topic: string, payload: Buffer) {
       p_setpoint_kw: telemetry.pSetpointKw,
       soc: telemetry.soc,
       site_id: telemetry.siteId,
+      feeder_id: telemetry.feederId ?? telemetry.siteId ?? config.defaultFeederId,
     });
   } catch (err) {
     if (err instanceof TelemetryValidationError) {
@@ -72,7 +74,7 @@ export async function startMqttClient(): Promise<void> {
       `${config.mqtt.host}:${config.mqtt.port}`
     );
 
-    mqttClient.subscribe('der/telemetry/#', (err) => {
+    mqttClient.subscribe('der/telemetry/#', (err: Error | null) => {
       if (err) {
         console.error('[mqttClient] subscribe error', err);
       } else {
@@ -81,7 +83,7 @@ export async function startMqttClient(): Promise<void> {
     });
   });
 
-  mqttClient.on('message', (topic, payload) => {
+  mqttClient.on('message', (topic: string, payload: Buffer) => {
     //Handle telemetry messages
     if (topic.startsWith('der/telemetry/')) {
       parseAndStoreMessage(topic, payload).catch((err) => {
@@ -90,7 +92,7 @@ export async function startMqttClient(): Promise<void> {
     }
   });
 
-  mqttClient.on('error', (err) => {
+  mqttClient.on('error', (err: Error) => {
     lastError = err.message;
     console.error('[mqttClient] connection error', err);
   });

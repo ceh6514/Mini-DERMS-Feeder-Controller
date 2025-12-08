@@ -4,7 +4,7 @@ import { ControlLoopStateSnapshot, OfflineDeviceInfo } from './state/controlLoop
 
 const webhookUrl = process.env.ALERT_WEBHOOK_URL;
 
-function postWebhook(message: string, payload: Record<string, unknown>) {
+function postWebhook(message: string, payload: Record<string, unknown> | ControlLoopStateSnapshot) {
   if (!webhookUrl) {
     console.info('[alerting] webhook not configured; skipping alert:', message);
     return;
@@ -12,7 +12,7 @@ function postWebhook(message: string, payload: Record<string, unknown>) {
 
   try {
     const url = new URL(webhookUrl);
-    const body = JSON.stringify({ message, ...payload });
+    const body = JSON.stringify({ message, ...(payload as Record<string, unknown>) });
     const options: https.RequestOptions = {
       hostname: url.hostname,
       port: url.port || (url.protocol === 'https:' ? 443 : 80),

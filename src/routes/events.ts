@@ -5,7 +5,7 @@ import { createEvent } from '../repositories/eventsRepo';
 const router = Router();
 
 router.post('/', async (req, res) => {
-  const { tsStart, tsEnd, limitKw, type } = req.body ?? {};
+  const { tsStart, tsEnd, limitKw, type, feederId } = req.body ?? {};
 
   if (!tsStart || !tsEnd || typeof limitKw !== 'number' || !type) {
     res.status(400).json({ error: 'tsStart, tsEnd, limitKw, and type are required' });
@@ -26,6 +26,7 @@ router.post('/', async (req, res) => {
       tsEnd: endDate,
       limitKw,
       type,
+      feederId,
     });
     res.status(201).json(created);
   } catch (err) {

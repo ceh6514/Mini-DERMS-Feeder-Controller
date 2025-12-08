@@ -21,6 +21,7 @@ export interface Config {
   mqtt: MqttConfig;
   controlIntervalSeconds: number;
   feederDefaultLimitKw: number;
+  defaultFeederId: string;
   controlParams: {
     globalKwLimit: number;
     minSocReserve: number;
@@ -46,6 +47,7 @@ const config: Config = {
   },
   controlIntervalSeconds: Number(process.env.CONTROL_INTERVAL_SECONDS ?? 60),
   feederDefaultLimitKw: Number(process.env.FEEDER_DEFAULT_LIMIT_KW ?? 250),
+  defaultFeederId: process.env.DEFAULT_FEEDER_ID ?? 'default-feeder',
   controlParams: {
     globalKwLimit: Number(process.env.CONTROL_GLOBAL_KW_LIMIT ?? 250),
     minSocReserve: Number(process.env.CONTROL_MIN_SOC_RESERVE ?? 0.2),

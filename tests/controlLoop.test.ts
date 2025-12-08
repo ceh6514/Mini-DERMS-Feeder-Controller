@@ -21,6 +21,7 @@ describe('controlLoop helpers', () => {
     type: 'ev',
     p_actual_kw: 5,
     site_id: 'site-1',
+    feeder_id: 'feeder-1',
   };
 
   beforeEach(() => {
@@ -30,8 +31,8 @@ describe('controlLoop helpers', () => {
 
   it('builds a lookup by device id', () => {
     const devices: Device[] = [
-      { id: 'ev-1', type: 'ev', siteId: 'site-1', pMaxKw: 10 },
-      { id: 'ev-2', type: 'ev', siteId: 'site-1', pMaxKw: 20 },
+      { id: 'ev-1', type: 'ev', siteId: 'site-1', feederId: 'feeder-1', pMaxKw: 10 },
+      { id: 'ev-2', type: 'ev', siteId: 'site-1', feederId: 'feeder-1', pMaxKw: 20 },
     ];
 
     const lookup = buildDeviceLookup(devices);
@@ -96,8 +97,8 @@ describe('controlLoop helpers', () => {
     ];
 
     const devices: Device[] = [
-      { id: 'ev-1', type: 'ev', siteId: 'site-1', pMaxKw: 20 },
-      { id: 'ev-2', type: 'ev', siteId: 'site-2', pMaxKw: 9 },
+      { id: 'ev-1', type: 'ev', siteId: 'site-1', feederId: 'feeder-1', pMaxKw: 20 },
+      { id: 'ev-2', type: 'ev', siteId: 'site-2', feederId: 'feeder-1', pMaxKw: 9 },
     ];
 
     const evDevices = prepareEvDevices(telemetryRows, buildDeviceLookup(devices));
@@ -115,6 +116,7 @@ describe('controlLoop helpers', () => {
         id: 'ev-1',
         type: 'ev',
         siteId: 'site-1',
+        feederId: 'feeder-1',
         pMaxKw: 10,
         telemetry: baseTelemetry,
         currentSetpointKw: 5,
@@ -128,6 +130,7 @@ describe('controlLoop helpers', () => {
         id: 'ev-2',
         type: 'ev',
         siteId: 'site-1',
+        feederId: 'feeder-1',
         pMaxKw: 5,
         telemetry: { ...baseTelemetry, device_id: 'ev-2' },
         currentSetpointKw: 2,
@@ -160,6 +163,7 @@ describe('controlLoop helpers', () => {
         id: 'ev-1',
         type: 'ev',
         siteId: 'site-1',
+        feederId: 'feeder-1',
         pMaxKw: 10,
         telemetry: baseTelemetry,
         currentSetpointKw: 5,

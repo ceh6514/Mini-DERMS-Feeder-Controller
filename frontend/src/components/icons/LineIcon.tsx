@@ -8,7 +8,8 @@ export type LineIconName =
   | 'sun'
   | 'moon'
   | 'device'
-  | 'spark';
+  | 'spark'
+  | 'network';
 
 interface Props {
   name: LineIconName;
@@ -65,6 +66,16 @@ const paths: Record<LineIconName, JSX.Element> = {
     <>
       <path d="M12 2 9 10h4l-3 8" />
       <path d="m15 14-3 8" />
+    </>
+  ),
+  network: (
+    <>
+      <circle cx="6" cy="12" r="2" />
+      <circle cx="18" cy="8" r="2" />
+      <circle cx="18" cy="16" r="2" />
+      <path d="M8 12h6" />
+      <path d="m14 10 2-2" />
+      <path d="m14 14 2 2" />
     </>
   ),
 };

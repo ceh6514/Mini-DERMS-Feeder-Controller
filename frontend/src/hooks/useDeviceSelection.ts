@@ -18,8 +18,13 @@ export function useDeviceSelection(
   );
 
   useEffect(() => {
-    if (!selectedId && devices.length > 0) {
-      const prioritized = [...devices].sort((a, b) => (b.priority ?? 1) - (a.priority ?? 1));
+    const prioritized = [...devices].sort((a, b) => (b.priority ?? 1) - (a.priority ?? 1));
+    if (selectedId && !devices.find((d) => d.id === selectedId)) {
+      setSelectedId(prioritized[0]?.id ?? null);
+      return;
+    }
+
+    if (!selectedId && prioritized.length > 0) {
       setSelectedId(prioritized[0]?.id ?? null);
     }
   }, [devices, selectedId]);

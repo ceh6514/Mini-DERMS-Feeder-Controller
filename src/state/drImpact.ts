@@ -20,6 +20,7 @@ export interface DrImpactSnapshot {
   priorityWeightedUtilizationPct: number;
   activeProgram: DrProgramRow | null;
   perDevice: DrImpactPerDevice[];
+  feederId: string;
 }
 
 let lastImpact: DrImpactSnapshot | null = null;

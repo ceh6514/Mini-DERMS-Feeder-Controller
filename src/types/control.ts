@@ -10,6 +10,7 @@ export interface DeviceState {
   id: string;
   type: string;
   siteId: string;
+  feederId: string;
   pMaxKw: number;
   priority: number;
   soc: number | null;
@@ -23,6 +24,7 @@ export interface DeviceMetrics {
   deviceId: string;
   type: string;
   siteId: string;
+  feederId: string;
   avgAbsError: number;
   lastSetpointKw: number | null;
   lastActualKw: number | null;
