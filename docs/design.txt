@@ -1,25 +1,30 @@
 Mini-DERMS Feeder Controller – Design Document
 1. Purpose and Scope
 
-Mini-DERMS Feeder Controller is a small, end-to-end demo of a feeder-level DERMS system:
+Mini-DERMS Feeder Controller is a small, end-to-end demo of a feeder-level DERMS system that now supports multiple feeders and authenticated operator workflows.
 
-It simulates distributed energy resources (DERs): PV, batteries, and EV chargers.
+It simulates distributed energy resources (DERs): PV, batteries, EV chargers, and physical Pi-based agents, grouped by feeder and optionally nested through parent feeders.
 
 It ingests telemetry via MQTT, persists it in PostgreSQL, and exposes a REST API.
 
-It runs a periodic control loop that enforces a configurable feeder limit, including demand-response (DR) events that override the default limit.
+It runs a periodic control loop per feeder that enforces configurable feeder limits, applies DR programs, and can use either a heuristic allocator or an optimizer-backed allocator.
 
-It ships with a React dashboard that visualizes current feeder load, device status, and lets an operator create DR events through a small web form.
+It ships with a React dashboard that visualizes current feeder load, device status, tracking-error/SOC metrics, and lets an operator create DR events through a small web form and login flow.
 
-This is a single-feeder demo intended for learning and portfolio use, not production deployment.
+This is a teaching/demo system, not production deployment.
 
-Non-goals:
+What’s new / capabilities
 
-No multi-feeder topology or full network model.
+- Multi-feeder topology: devices carry feeder_id/parent_feeder_id and the control loop iterates per feeder.
+- Authentication and roles: JWT guard protecting API routes with viewer/operator/admin roles.
+- Optimizer-based allocation: optional LP solver path alongside the weighted heuristic allocator.
+- Physical DER agents: Pi-based devices highlighted in the dashboard with origin filters and tracking-error metrics.
 
-No complex optimization (LP/MIP); control is heuristic and proportional.
+Non-goals (still out of scope)
 
-No authentication / multi-tenant security model.
+- Full distribution network power-flow modeling or voltage-aware constraints.
+- Market bidding/settlement or utility integration beyond simple DR programs.
+- High-availability production hardening; this remains a local/demo stack.
 
 2. High-Level Architecture
 
@@ -37,11 +42,11 @@ Frontend: React + TypeScript + Vite.
 
 Data & Control Flow
 
-Simulator → MQTT
+Simulator / Pi agents → MQTT
 
-PV, battery, and multiple EV chargers periodically publish telemetry to:
+PV, battery, and multiple EV chargers (simulated or physical) periodically publish telemetry to:
 
-der/telemetry/<deviceId> (JSON payload).
+der/telemetry/<deviceId> (JSON payload). Each payload includes feeder_id and optional parent_feeder_id so devices can be grouped across multiple feeders.
 
 MQTT → Backend → Postgres
 
@@ -51,39 +56,41 @@ For each message:
 
 Parse JSON.
 
-Best-effort upsert device metadata into devices.
+Best-effort upsert device metadata into devices (including feeder_id, priority, and whether the device is physical).
 
 Insert a row into telemetry (time-series).
 
 DB → Control Loop → MQTT
 
-Periodic control loop:
+Periodic control loop runs per active feeder id:
 
-Queries latest telemetry per device.
+Queries latest telemetry for that feeder’s devices.
 
-Computes total feeder kW vs current limit.
+Computes total feeder kW vs current limit and demand-response program.
 
-Allocates allowed kW across EV chargers proportionally.
+Allocates allowed kW across dispatchable devices using a weighted heuristic or optimizer-backed allocator.
 
 Publishes setpoints on der/control/<deviceId> as JSON.
 
-MQTT → Simulator
+MQTT → Simulator / Pi agents
 
 Simulator subscribes to der/control/#.
 
-For EVs, it ramps p_actual_kw toward the commanded p_setpoint_kw with a simple dynamic model and noise.
+For EVs, it ramps p_actual_kw toward the commanded p_setpoint_kw with a simple dynamic model and noise; Pi agents respond directly to setpoints.
 
 Backend → Frontend
 
 React dashboard polls:
 
-GET /api/feeder/summary
+GET /api/feeder/summary (optionally per feeder)
 
 GET /api/devices
 
+GET /api/metrics/tracking-error and other charts
+
 A small form calls:
 
-POST /api/events to create DR events.
+POST /api/events to create DR events after authenticating.
 
 3. Backend Architecture
 3.1 Startup & Wiring (src/index.ts)
@@ -104,15 +111,13 @@ Routes:
 
 GET /api/health
 
-GET /api/feeder/summary
+GET /api/openapi.json and /api/docs for Swagger UI
 
-GET /api/devices
+POST /api/auth/login (before auth guard)
 
-GET /api/telemetry/:deviceId (recent history)
+app.use('/api', requireAuth) applies JWT guard to the rest.
 
-GET /api/events (if exposed)
-
-POST /api/events
+Routers for feeder (summary/history/metrics/feeders), devices, telemetry, events, simulation helpers, DR programs, and metrics (tracking-error).
 
 Start the control loop (startControlLoop) after DB and MQTT are ready.
 
@@ -140,7 +145,19 @@ Control behavior:
 
 CONTROL_INTERVAL_SECONDS (e.g., 60s).
 
-FEEDER_DEFAULT_LIMIT_KW (e.g., 250 kW).
+FEEDER_DEFAULT_LIMIT_KW and DEFAULT_FEEDER_ID to seed multi-feeder runs.
+
+CONTROL_GLOBAL_KW_LIMIT, CONTROL_MIN_SOC_RESERVE, CONTROL_TARGET_SOC, CONTROL_SOC_WEIGHT, CONTROL_RESPECT_PRIORITY tune the allocator.
+
+CONTROL_ALLOCATION_MODE and CONTROL_OPTIMIZER_* toggle the optimizer path (javascript-lp-solver) vs heuristic.
+
+Tracking metrics:
+
+TRACKING_ERROR_WINDOW_MINUTES controls rolling tracking-error calculations.
+
+Authentication:
+
+JWT_SECRET, JWT_TOKEN_TTL_HOURS, and AUTH_USERS (JSON array of username/password/role) define the login guard.
 
 Exposes a config object used everywhere else; the app can run with just .env as documented in the README.
 
@@ -158,15 +175,19 @@ type (pv, battery, ev, …)
 
 site_id (text)
 
+feeder_id (text, defaults to DEFAULT_FEEDER_ID) with optional parent_feeder_id for hierarchy
+
 p_max_kw (numeric)
 
-additional metadata fields as needed.
+priority (integer) and is_physical flags
 
 telemetry
 
 id (PK, serial)
 
 device_id (FK → devices.id)
+
+feeder_id (text)
 
 ts (timestamp with time zone)
 
@@ -180,11 +201,13 @@ soc (numeric, nullable)
 
 site_id
 
-device_p_max_kw (snapshot of p_max_kw)
+weather/irradiance estimates for PV (cloud_cover_pct, shortwave_radiation_wm2, estimated_power_w)
 
 events
 
 id (PK, serial)
+
+feeder_id (text)
 
 ts_start (timestamptz)
 
@@ -193,6 +216,12 @@ ts_end (timestamptz)
 limit_kw (numeric)
 
 type (e.g., 'dr')
+
+dr_programs
+
+id (PK, serial)
+
+name, mode, window (ts_start/ts_end), target_shed_kw, incentive/penalty knobs, is_active
 
 Exposes a small query(sql, params) helper used by repository modules.
 
@@ -275,178 +304,96 @@ Errors are logged but do not bring down the process.
 
 3.6 Control Loop (src/controllers/controlLoop.ts)
 
-Runs periodically to enforce feeder limits by adjusting EV setpoints.
+Runs periodically to enforce feeder limits by adjusting dispatchable setpoints (primarily EVs) for each active feeder.
 
 Inputs per tick
 
 now = new Date()
 
-limitKw = getCurrentFeederLimit(now)
+feederIds = getFeederIds() (defaults to DEFAULT_FEEDER_ID if none are registered)
 
-latest = getLatestTelemetryPerDevice()
+limitKw = getCurrentFeederLimit(now, feederId) (includes active DR events)
+
+latest = getLatestTelemetryPerDevice(feederId)
 
 devices = getAllDevices()
 
 Derived values
 
-Join devices + latest on id to get, for each device:
+Join devices + latest on id to build DeviceState objects including feederId, priority, pMaxKw, SOC, physical/simulated flags, and current setpoint estimates.
 
-deviceId
+Filter dispatchable devices (EVs + batteries) and partition per feeder.
 
-type
+Compute per-feeder totals and availableForEv = max(min(limitKw, CONTROL_GLOBAL_KW_LIMIT) - nonEvKw, 0).
 
-pActualKw (from latest telemetry)
+If an active DR program exists, adjust availableForEv using elasticity/price knobs and record per-device utilization metrics.
 
-pMaxKw (from devices table)
+Allocation path
 
-Partition into:
+- computeAllowedShares mixes long-lived deficits, device priority, SOC gap from reserve/target, and optional optimizer mode.
+- If CONTROL_ALLOCATION_MODE=optimizer and javascript-lp-solver is present/enabled, build and solve an LP with feeder cap + device caps; fall back to heuristic if infeasible.
+- Heuristic mode sorts by deficit/weight, fills allocations, then backfills remaining headroom.
 
-evDevices: type "ev".
+Publishing & monitoring
 
-nonEvDevices: all others (pv, battery, etc.).
+- Commands ramp toward targets with a fixed step to avoid oscillation.
+- deviceSetpoints/deviceDeficits maps persist across ticks to smooth control.
+- Records tracking-error samples and DR impact telemetry for dashboards.
+- Offline/stalled-loop detection triggers warning logs/alerts; MQTT publishes setpoints when connected.
 
-Compute:
-
-totalKw = sum(pActualKw for all devices)
-
-totalEvKw = sum(pActualKw for evDevices)
-
-nonEvKw = totalKw - totalEvKw
-
-availableForEv = max(limitKw - nonEvKw, 0)
-
-Fairness heuristic
-
-Only EVs are controllable; PV and battery remain as they are.
-
-Let weights[i] for each EV be (for example) its pMaxKw.
-
-If there is overload (totalKw > limitKw + margin):
-
-Distribute availableForEv across EVs proportionally:
-
-allowedEvKw[i] = availableForEv * weights[i] / sum(weights)
-
-
-Clamp each allowedEvKw[i] to [0, pMaxKw[i]].
-
-Move current EV setpoints toward these allowed values (not necessarily in one jump, to avoid oscillations).
-
-If there is headroom (totalKw < limitKw - margin):
-
-Allow EV setpoints to gently ramp back up toward pMaxKw, again respecting the feeder limit.
-
-State and publishing
-
-Maintain deviceSetpoints: Map<string, number> to remember last commanded setpoint per EV.
-
-For each EV:
-
-prevSetpoint = deviceSetpoints.get(id) ?? pActualKw
-
-newSetpoint = f(prevSetpoint, allowedEvKw) (according to heuristic).
-
-If |newSetpoint - prevSetpoint| > epsilon:
-
-Publish to MQTT:
-
-const topic = `der/control/${deviceId}`;
-const payload = JSON.stringify({ p_setpoint_kw: newSetpoint });
-mqttClient.publish(topic, payload);
-
-
-Update deviceSetpoints.
-
-Log each tick:
-
-[controlLoop] total <x> limit <y> nonEv <z>
-[controlLoop] ev commands [ { id, setpoint }, ... ]
-
-
-This loop turns DR events and feeder limits into concrete kW setpoints for each EV charger.
+This loop turns DR events, feeder limits, and optimizer/heuristic policy into concrete kW setpoints for each feeder’s dispatchable devices.
 
 3.7 HTTP API Surface
+
+Authentication
+
+POST /api/auth/login
+→ { token, user: { username, role } } using configured AUTH_USERS. All other routes (except /api/health and /api/openapi.json) require a bearer token.
 
 Health
 
 GET /api/health
-→ { "status": "ok" } if the process is up and responding.
+→ { status, db, mqtt, controlLoop } including offline device counts and stalled-loop status.
 
 Feeder
 
-GET /api/feeder/summary
-Returns:
+GET /api/feeder/summary?feederId=<id>
+Returns current totalKw, limitKw, deviceCount, and by-type aggregates for the selected feeder.
 
-interface FeederSummary {
-  totalKw: number;
-  limitKw: number;
-  deviceCount: number;
-  byType: {
-    [type: string]: {
-      count: number;
-      totalKw: number;
-    };
-  };
-}
+GET /api/feeder/history?minutes=30&bucketSeconds=60&feederId=<id>
+Downsampled feeder totals over time plus current limit.
 
+GET /api/feeder/metrics?window=day&bucketMinutes=60&feederId=<id>
+Aggregated utilization metrics for charts.
+
+GET /api/feeder/feeders
+Lists known feeders with parent relationships and device counts.
 
 Devices
 
 GET /api/devices
-Returns devices with latest telemetry:
-
-interface DeviceTelemetry {
-  id: number;
-  device_id: string;
-  ts: string;
-  type: string;
-  p_actual_kw: number;
-  p_setpoint_kw: number | null;
-  soc: number | null;
-  site_id: string;
-  device_p_max_kw: number;
-}
-
-interface DeviceWithLatest {
-  id: string;
-  type: string;
-  siteId: string;
-  pMaxKw: number;
-  latestTelemetry: DeviceTelemetry | null;
-}
-
+Returns devices with latest telemetry, feeder metadata, priority, and physical/simulated flag.
 
 Telemetry
 
 GET /api/telemetry/:deviceId
 Returns recent history for a single device (e.g., N most recent points), used for debugging or future charts.
 
-Events
+Events & DR programs
 
 POST /api/events
-Request body:
+Create a DR event window with a new feeder limit (enforced by auth role guards).
 
-{
-  "tsStart": "ISO timestamp",
-  "tsEnd": "ISO timestamp",
-  "limitKw": 3,
-  "type": "dr"
-}
+GET /api/events
+List current/past events.
 
+GET /api/dr-programs and POST /api/dr-programs
+Inspect or create dynamic DR programs that influence allocation elasticity.
 
-Response:
+Metrics
 
-{
-  "id": "1",
-  "ts_start": "...",
-  "ts_end": "...",
-  "limit_kw": 3,
-  "type": "dr"
-}
-
-
-GET /api/events (optional, if implemented)
-Returns existing events for inspection.
+GET /api/metrics/tracking-error
+Rolling average of p_actual_kw - p_setpoint_kw per device, used by the dashboard.
 
 4. Frontend (Dashboard) Design
 4.1 Structure
@@ -474,6 +421,8 @@ DeviceTable.tsx – table of devices (ID, type, site, p_actual_kw, p_max_kw, SOC
 DrEventForm.tsx – small card to create DR events.
 
 Styling: src/styles.css for basic card/tables/layout styling.
+
+The dashboard now starts with a login screen (viewer/operator/admin), highlights physical Pi-based devices, and layers in filters plus SOC/tracking-error visualizations to match the upgraded backend metrics.
 
 4.2 Polling and State
 
