@@ -9,6 +9,7 @@ import {
   updateDrProgram,
 } from '../repositories/drProgramsRepo';
 import { getDrImpact } from '../state/drImpact';
+import { requireRole } from '../auth';
 
 const router = Router();
 
@@ -51,7 +52,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireRole('operator'), async (req, res) => {
   const {
     name,
     mode,
@@ -101,7 +102,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.post('/:id/activate', async (req, res) => {
+router.post('/:id/activate', requireRole('operator'), async (req, res) => {
   const id = Number(req.params.id);
   if (Number.isNaN(id)) {
     return res.status(400).json({ error: 'Invalid program id' });
@@ -119,7 +120,7 @@ router.post('/:id/activate', async (req, res) => {
   }
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireRole('operator'), async (req, res) => {
   const id = Number(req.params.id);
   if (Number.isNaN(id)) {
     return res.status(400).json({ error: 'Invalid program id' });
@@ -170,7 +171,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireRole('admin'), async (req, res) => {
   const id = Number(req.params.id);
   if (Number.isNaN(id)) {
     return res.status(400).json({ error: 'Invalid program id' });

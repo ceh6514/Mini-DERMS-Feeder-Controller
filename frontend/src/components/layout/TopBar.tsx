@@ -9,9 +9,11 @@ interface TopBarProps {
   feeders: FeederInfo[];
   selectedFeederId: string | null;
   onFeederChange: (feederId: string) => void;
+  username: string;
+  onLogout: () => void;
 }
 
-const TopBar: React.FC<TopBarProps> = ({ summary, health, theme, feeders, selectedFeederId, onFeederChange }) => {
+const TopBar: React.FC<TopBarProps> = ({ summary, health, theme, feeders, selectedFeederId, onFeederChange, username, onLogout }) => {
   const offlineCount = health?.controlLoop.offlineCount ?? 0;
   const loopStatus = health?.controlLoop.status ?? 'idle';
   const loopBadge = loopStatus === 'ok' ? 'success' : loopStatus === 'idle' ? 'warning' : 'danger';
@@ -62,6 +64,10 @@ const TopBar: React.FC<TopBarProps> = ({ summary, health, theme, feeders, select
           MQTT {health?.mqtt.connected ? 'connected' : 'disconnected'} • DB {health?.db.ok ? 'ok' : 'down'}
         </span>
         <span className="badge warning">Control horizon SOC-aware</span>
+        <span className="pill muted">Signed in as {username}</span>
+        <button className="pill danger" onClick={onLogout}>
+          Logout
+        </button>
       </div>
     </div>
   );

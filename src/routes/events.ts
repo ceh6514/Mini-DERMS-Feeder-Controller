@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { createEvent } from '../repositories/eventsRepo';
+import { requireRole } from '../auth';
 
 
 const router = Router();
 
-router.post('/', async (req, res) => {
+router.post('/', requireRole('operator'), async (req, res) => {
   const { tsStart, tsEnd, limitKw, type, feederId } = req.body ?? {};
 
   if (!tsStart || !tsEnd || typeof limitKw !== 'number' || !type) {

@@ -15,6 +15,7 @@ import HeroStrip from '../components/layout/HeroStrip';
 import OrganicDivider from '../components/layout/OrganicDivider';
 import EmptyState from '../components/empty/EmptyState';
 import LineIcon from '../components/icons/LineIcon';
+import { useAuth } from '../auth/AuthProvider';
 
 const Dashboard = () => {
   const theme = useDayNightTheme();
@@ -26,6 +27,7 @@ const Dashboard = () => {
   const [filter, setFilter] = useState<'all' | 'physical' | 'simulated'>('all');
   const [toast, setToast] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState('hero');
+  const { user, logout } = useAuth();
 
   const heroRef = useRef<HTMLDivElement | null>(null);
   const generationRef = useRef<HTMLDivElement | null>(null);
@@ -86,6 +88,8 @@ const Dashboard = () => {
       feeders={feeders}
       selectedFeederId={selectedFeederId}
       onFeederChange={setSelectedFeederId}
+      username={user?.username ?? 'unknown'}
+      onLogout={logout}
     >
       {error && <div className="toast">{error}</div>}
       <div ref={heroRef}>

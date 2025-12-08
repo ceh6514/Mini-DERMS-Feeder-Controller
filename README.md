@@ -53,6 +53,23 @@ If you prefer to run pieces yourself:
 
 The backend and frontend hot-reload when running locally or mounted into containers.
 
+### Authentication and roles
+API routes (except `/api/health` and `/api/auth/login`) are protected by a lightweight JWT-based guard with three roles:
+
+- **viewer**: read-only dashboard access
+- **operator**: can issue controls such as DR events, simulation overrides, and telemetry ingest
+- **admin**: everything operators can do plus destructive operations (e.g., deleting DR programs)
+
+Configure credentials and secrets through environment variables (see `.env.example` for defaults):
+
+```bash
+JWT_SECRET=change-me
+JWT_TOKEN_TTL_HOURS=12
+AUTH_USERS='[{"username":"admin","password":"admin123","role":"admin"},{"username":"operator","password":"operator123","role":"operator"},{"username":"viewer","password":"viewer123","role":"viewer"}]'
+```
+
+Use the configured username/password pairs to sign in via the dashboard login screen. The frontend automatically stores the JWT and attaches it to subsequent API calls. Update the `AUTH_USERS` array and `JWT_SECRET` before deploying anywhere non-local.
+
 ## 🐍 Run the Raspberry Pi DER agent
 To connect a physical Pi-based device, use the provided MQTT agent:
 
