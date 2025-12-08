@@ -249,7 +249,7 @@ export function computeAllowedShares(
   return allowed;
 }
 
-function applyDrPolicy(
+export function applyDrPolicy(
   program: DrProgramRow | null,
   availableForEv: number,
   evDevices: DeviceWithTelemetry[],
