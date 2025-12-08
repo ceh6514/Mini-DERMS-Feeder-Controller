@@ -11,6 +11,7 @@ interface TrackingSample {
   type: string;
   siteId: string;
   isPhysical: boolean;
+  feederId: string;
 }
 
 const trackingHistory = new Map<string, TrackingSample[]>();
@@ -31,6 +32,7 @@ export function recordTrackingSample(args: {
   deviceId: string;
   type: string;
   siteId: string;
+  feederId: string;
   priority: number;
   soc: number | null;
   isPhysical: boolean;
@@ -51,6 +53,7 @@ export function recordTrackingSample(args: {
     type: args.type,
     siteId: args.siteId,
     isPhysical: args.isPhysical,
+    feederId: args.feederId,
   };
 
   const existing = trackingHistory.get(args.deviceId) ?? [];
@@ -58,24 +61,34 @@ export function recordTrackingSample(args: {
   trackingHistory.set(args.deviceId, existing);
 }
 
-export function getTrackingMetrics(windowMinutes?: number): DeviceMetrics[] {
+export function getTrackingMetrics(windowMinutes?: number, feederId?: string): DeviceMetrics[] {
   const windowMs = (windowMinutes ?? config.trackingErrorWindowMinutes) * 60 * 1000;
   prune(windowMs);
 
-  return [...trackingHistory.entries()].map(([deviceId, samples]) => {
+  const normalizedFeeder = feederId?.trim();
+  const metrics: DeviceMetrics[] = [];
+
+  for (const [deviceId, samples] of trackingHistory.entries()) {
     const count = samples.length || 1;
     const totalError = samples.reduce((sum, s) => sum + s.absError, 0);
     const last = samples[samples.length - 1];
-    return {
+    if (normalizedFeeder && last.feederId !== normalizedFeeder) {
+      continue;
+    }
+
+    metrics.push({
       deviceId,
       type: last.type,
       siteId: last.siteId,
+      feederId: last.feederId,
       avgAbsError: totalError / count,
       lastSetpointKw: last.setpoint,
       lastActualKw: last.actual,
       priority: last.priority,
       soc: last.soc,
       isPhysical: last.isPhysical,
-    };
-  });
+    });
+  }
+
+  return metrics;
 }

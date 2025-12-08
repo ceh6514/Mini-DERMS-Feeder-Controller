@@ -11,6 +11,7 @@ export interface DeviceTelemetry {
   p_setpoint_w?: number | null;
   soc: number | null;
   site_id: string;
+  feeder_id?: string;
   device_p_max_kw: number;
 }
 
@@ -18,6 +19,8 @@ export interface DeviceWithLatest {
   id: string;
   type: string;
   siteId: string;
+  feederId: string;
+  parentFeederId?: string | null;
   pMaxKw: number;
   priority?: number | null;
   latestTelemetry: DeviceTelemetry | null;
@@ -30,12 +33,19 @@ export interface DeviceMetrics {
   deviceId: string;
   type: string;
   siteId: string;
+  feederId: string;
   avgAbsError: number;
   lastSetpointKw: number | null;
   lastActualKw: number | null;
   priority: number;
   soc: number | null;
   isPhysical: boolean;
+}
+
+export interface FeederInfo {
+  feederId: string;
+  parentFeederId: string | null;
+  deviceCount: number;
 }
 
 export interface ControlParams {
@@ -47,6 +57,7 @@ export interface ControlParams {
 }
 
 export interface FeederSummary {
+  feederId: string;
   totalKw: number;
   limitKw: number;
   deviceCount: number;
@@ -101,6 +112,7 @@ export interface DrImpactSnapshot {
   priorityWeightedUtilizationPct: number;
   activeProgram: DrProgram | null;
   perDevice: DrImpactDevice[];
+  feederId: string;
 }
 
 export interface FeederHistoryPoint {
@@ -143,6 +155,7 @@ export interface AggregatedMetricsResponse {
   window: MetricsWindow;
   rangeStart: string;
   rangeEnd: string;
+  feederId: string;
   feeder: {
     avgKw: number;
     maxKw: number;

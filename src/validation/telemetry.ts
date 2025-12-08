@@ -8,12 +8,15 @@ export interface ValidatedTelemetry {
   pSetpointKw: number | null;
   soc: number | null;
   siteId: string;
+  feederId: string | null;
   pMaxKw: number;
   priority: number | null;
 }
 
 export class TelemetryValidationError extends Error {}
 
+function asNumber(value: unknown, field: string): number;
+function asNumber(value: unknown, field: string, allowNull: true): number | null;
 function asNumber(value: unknown, field: string, allowNull = false): number | null {
   if (value === null && allowNull) return null;
   if (value === undefined) return allowNull ? null : NaN;
@@ -70,6 +73,10 @@ export function validateTelemetryPayload(
     throw new TelemetryValidationError('site_id is required');
   }
 
+  const feederId = typeof payload.feeder_id === 'string' && payload.feeder_id.trim()
+    ? payload.feeder_id.trim()
+    : null;
+
   const pMaxKw = asNumber(payload.p_max_kw, 'p_max_kw', true) ?? 0;
   const priority = asNumber(payload.priority, 'priority', true);
 
@@ -81,6 +88,7 @@ export function validateTelemetryPayload(
     pSetpointKw,
     soc,
     siteId,
+    feederId,
     pMaxKw,
     priority,
   };

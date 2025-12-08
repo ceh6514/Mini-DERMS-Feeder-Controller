@@ -5,6 +5,8 @@ import {
   getFeederHistory,
   getLatestTelemetryPerDevice,
 } from '../repositories/telemetryRepo';
+import { getFeederSummaries } from '../repositories/devicesRepo';
+import config from '../config';
 
 const router = Router();
 
@@ -15,10 +17,11 @@ const router = Router();
  */
 router.get('/summary', async (_req, res) => {
   try {
+    const feederId = typeof _req.query.feederId === 'string' ? _req.query.feederId : undefined;
     const now = new Date();
     const [limitKw, latest] = await Promise.all([
-      getCurrentFeederLimit(now),
-      getLatestTelemetryPerDevice(),
+      getCurrentFeederLimit(now, feederId),
+      getLatestTelemetryPerDevice(feederId),
     ]);
 
     const summary = latest.reduce(
@@ -51,6 +54,7 @@ router.get('/summary', async (_req, res) => {
     );
 
     res.json({
+      feederId: feederId ?? config.defaultFeederId,
       totalKw: summary.totalKw,
       limitKw,
       deviceCount: summary.deviceCount,
@@ -73,11 +77,12 @@ router.get('/history', async (req, res) => {
     const bucketSeconds = req.query.bucketSeconds
       ? Number(req.query.bucketSeconds)
       : 60;
+    const feederId = typeof req.query.feederId === 'string' ? req.query.feederId : undefined;
 
-    const history = await getFeederHistory({ minutes, bucketSeconds });
+    const history = await getFeederHistory({ minutes, bucketSeconds, feederId });
 
     const now = new Date();
-    const limitKw = await getCurrentFeederLimit(now);
+    const limitKw = await getCurrentFeederLimit(now, feederId);
 
     const points = history
       .map((p: any) => {
@@ -123,6 +128,7 @@ router.get('/metrics', async (req, res) => {
   try {
     const windowParam = (req.query.window as string) || 'day';
     const bucketMinutesRaw = req.query.bucketMinutes;
+    const feederId = typeof req.query.feederId === 'string' ? req.query.feederId : undefined;
     const bucketMinutes =
       bucketMinutesRaw !== undefined && bucketMinutesRaw !== null
         ? Number(bucketMinutesRaw)
@@ -136,12 +142,32 @@ router.get('/metrics', async (req, res) => {
       return res.status(400).json({ error: 'bucketMinutes must be a number when provided' });
     }
 
-    const metrics = await getAggregatedMetrics(windowParam as 'day' | 'week' | 'month', bucketMinutes);
+    const metrics = await getAggregatedMetrics(
+      windowParam as 'day' | 'week' | 'month',
+      bucketMinutes,
+      feederId,
+    );
 
     return res.json(metrics);
   } catch (err) {
     console.error('[feeder metrics] error', err);
     res.status(500).json({ error: 'Failed to load aggregated metrics' });
+  }
+});
+
+router.get('/feeders', async (_req, res) => {
+  try {
+    const feeders = await getFeederSummaries();
+    if (feeders.length === 0) {
+      res.json([
+        { feederId: config.defaultFeederId, parentFeederId: null, deviceCount: 0 },
+      ]);
+      return;
+    }
+    res.json(feeders);
+  } catch (err) {
+    console.error('[feeder list] error', err);
+    res.status(500).json({ error: 'Failed to load feeders' });
   }
 });
 

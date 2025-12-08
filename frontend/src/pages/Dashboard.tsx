@@ -8,8 +8,8 @@ import FeederHistoryChart from '../components/FeederHistoryChart';
 import { useDayNightTheme } from '../hooks/useDayNightTheme';
 import { useDeviceSelection } from '../hooks/useDeviceSelection';
 import { useLiveMetrics } from '../hooks/useLiveMetrics';
-import { DeviceTelemetry } from '../api/types';
-import { fetchDeviceTelemetry } from '../api/client';
+import { DeviceTelemetry, FeederInfo } from '../api/types';
+import { fetchDeviceTelemetry, fetchFeeders } from '../api/client';
 import TelemetryControlPanel from '../components/TelemetryControlPanel';
 import HeroStrip from '../components/layout/HeroStrip';
 import OrganicDivider from '../components/layout/OrganicDivider';
@@ -18,7 +18,9 @@ import LineIcon from '../components/icons/LineIcon';
 
 const Dashboard = () => {
   const theme = useDayNightTheme();
-  const { summary, devices, health, history, tracking, aggregated, loading, error } = useLiveMetrics();
+  const [feeders, setFeeders] = useState<FeederInfo[]>([]);
+  const [selectedFeederId, setSelectedFeederId] = useState<string | null>(null);
+  const { summary, devices, health, history, tracking, aggregated, loading, error } = useLiveMetrics(selectedFeederId ?? undefined);
   const { selectedId, setSelectedId } = useDeviceSelection(devices, tracking);
   const [deviceTelemetry, setDeviceTelemetry] = useState<DeviceTelemetry[]>([]);
   const [filter, setFilter] = useState<'all' | 'physical' | 'simulated'>('all');
@@ -44,6 +46,15 @@ const Dashboard = () => {
   } as const;
 
   useEffect(() => {
+    fetchFeeders()
+      .then((result) => {
+        setFeeders(result);
+        setSelectedFeederId((current) => current ?? result[0]?.feederId ?? null);
+      })
+      .catch((err) => setToast(err instanceof Error ? err.message : 'Failed to load feeders'));
+  }, []);
+
+  useEffect(() => {
     if (selectedId) {
       fetchDeviceTelemetry(selectedId, 120)
         .then(setDeviceTelemetry)
@@ -66,7 +77,16 @@ const Dashboard = () => {
   };
 
   return (
-    <LayoutShell active={activeSection} onNav={handleNav} summary={summary} health={health} theme={theme}>
+    <LayoutShell
+      active={activeSection}
+      onNav={handleNav}
+      summary={summary}
+      health={health}
+      theme={theme}
+      feeders={feeders}
+      selectedFeederId={selectedFeederId}
+      onFeederChange={setSelectedFeederId}
+    >
       {error && <div className="toast">{error}</div>}
       <div ref={heroRef}>
         <HeroStrip summary={summary} health={health} devices={devices} tracking={tracking} theme={theme} />

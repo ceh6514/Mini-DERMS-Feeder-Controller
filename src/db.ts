@@ -16,6 +16,8 @@ export async function initSchema(): Promise<void> {
       type TEXT NOT NULL,
       site_id TEXT NOT NULL,
       p_max_kw REAL NOT NULL,
+      feeder_id TEXT NOT NULL DEFAULT '${config.defaultFeederId}',
+      parent_feeder_id TEXT NULL,
       priority INTEGER,
       is_physical BOOLEAN NOT NULL DEFAULT FALSE
     );
@@ -23,8 +25,15 @@ export async function initSchema(): Promise<void> {
 
   await pool.query(`
     ALTER TABLE devices
+    ADD COLUMN IF NOT EXISTS feeder_id TEXT NOT NULL DEFAULT '${config.defaultFeederId}',
+    ADD COLUMN IF NOT EXISTS parent_feeder_id TEXT NULL,
     ADD COLUMN IF NOT EXISTS priority INTEGER,
     ADD COLUMN IF NOT EXISTS is_physical BOOLEAN NOT NULL DEFAULT FALSE;
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_devices_feeder
+      ON devices (feeder_id);
   `);
 
   await pool.query(`
@@ -37,6 +46,7 @@ export async function initSchema(): Promise<void> {
       p_setpoint_kw REAL,
       soc REAL,
       site_id TEXT NOT NULL,
+      feeder_id TEXT NOT NULL DEFAULT '${config.defaultFeederId}',
       cloud_cover_pct REAL NOT NULL DEFAULT 0,
       shortwave_radiation_wm2 REAL NOT NULL DEFAULT 0,
       estimated_power_w REAL NOT NULL DEFAULT 0
@@ -49,12 +59,14 @@ export async function initSchema(): Promise<void> {
       ts_start TIMESTAMPTZ NOT NULL,
       ts_end TIMESTAMPTZ NOT NULL,
       limit_kw REAL NOT NULL,
-      type TEXT NOT NULL
+      type TEXT NOT NULL,
+      feeder_id TEXT NOT NULL DEFAULT '${config.defaultFeederId}'
     );
   `);
 
   await pool.query(`
     ALTER TABLE telemetry
+    ADD COLUMN IF NOT EXISTS feeder_id TEXT NOT NULL DEFAULT '${config.defaultFeederId}',
     ADD COLUMN IF NOT EXISTS cloud_cover_pct REAL NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS shortwave_radiation_wm2 REAL NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS estimated_power_w REAL NOT NULL DEFAULT 0;
@@ -63,6 +75,11 @@ export async function initSchema(): Promise<void> {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_telemetry_device_ts
       ON telemetry (device_id, ts DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_telemetry_feeder_ts
+      ON telemetry (feeder_id, ts DESC);
   `);
 
   await pool.query(`
@@ -94,6 +111,6 @@ export async function query<T = unknown>(
   text: string,
   params?: any[],
 ): Promise<{ rows: T[] }> {
-  const result = await pool.query<T>(text, params);
-  return { rows: result.rows };
+  const result = await pool.query(text, params);
+  return { rows: result.rows as T[] };
 }
