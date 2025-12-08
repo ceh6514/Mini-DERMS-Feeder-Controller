@@ -30,6 +30,43 @@ export interface Config {
     socWeight: number;
   };
   trackingErrorWindowMinutes: number;
+  auth: {
+    jwtSecret: string;
+    tokenTtlHours: number;
+    users: {
+      username: string;
+      password: string;
+      role: 'viewer' | 'operator' | 'admin';
+    }[];
+  };
+}
+
+function parseUsers(): Config['auth']['users'] {
+  const raw = process.env.AUTH_USERS;
+  if (!raw) {
+    return [
+      { username: 'admin', password: 'admin123', role: 'admin' },
+      { username: 'operator', password: 'operator123', role: 'operator' },
+      { username: 'viewer', password: 'viewer123', role: 'viewer' },
+    ];
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.filter(
+        (u) => u?.username && u?.password && ['viewer', 'operator', 'admin'].includes(u.role),
+      ) as Config['auth']['users'];
+    }
+  } catch (err) {
+    console.warn('[config] Failed to parse AUTH_USERS, falling back to defaults', err);
+  }
+
+  return [
+    { username: 'admin', password: 'admin123', role: 'admin' },
+    { username: 'operator', password: 'operator123', role: 'operator' },
+    { username: 'viewer', password: 'viewer123', role: 'viewer' },
+  ];
 }
 
 const config: Config = {
@@ -56,6 +93,11 @@ const config: Config = {
     socWeight: Number(process.env.CONTROL_SOC_WEIGHT ?? 1.2),
   },
   trackingErrorWindowMinutes: Number(process.env.TRACKING_ERROR_WINDOW_MINUTES ?? 10),
+  auth: {
+    jwtSecret: process.env.JWT_SECRET ?? 'dev-secret-change-me',
+    tokenTtlHours: Number(process.env.JWT_TOKEN_TTL_HOURS ?? 12),
+    users: parseUsers(),
+  },
 };
 
 export default config;

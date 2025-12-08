@@ -14,6 +14,7 @@ import {
   DeviceMetrics,
   FeederInfo,
 } from './types';
+import { authFetch } from './http';
 
 export interface CreateDrEventInput {
   limitKw: number;
@@ -29,13 +30,8 @@ export interface TelemetryInput {
   siteId: string;
 }
 
-const BASE_URL =
-  import.meta.env.VITE_API_URL ||
-  `${window.location.protocol}//${window.location.hostname}:3001`;
-
-
 export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
-  const res = await fetch(`${BASE_URL}/api/health`, { signal });
+  const res = await authFetch('/api/health', { signal });
   if (!res.ok) {
     throw new Error('Failed to fetch health status');
   }
@@ -50,8 +46,8 @@ export async function fetchFeederSummary(
 ): Promise<FeederSummary> {
   const params = new URLSearchParams();
   if (feederId) params.set('feederId', feederId);
-  const res = await fetch(
-    `${BASE_URL}/api/feeder/summary${params.size ? `?${params.toString()}` : ''}`,
+  const res = await authFetch(
+    `/api/feeder/summary${params.size ? `?${params.toString()}` : ''}`,
     { signal },
   );
   if (!res.ok) {
@@ -67,8 +63,8 @@ export async function fetchDevices(
 ): Promise<DeviceWithLatest[]> {
   const params = new URLSearchParams();
   if (feederId) params.set('feederId', feederId);
-  const res = await fetch(
-    `${BASE_URL}/api/devices${params.size ? `?${params.toString()}` : ''}`,
+  const res = await authFetch(
+    `/api/devices${params.size ? `?${params.toString()}` : ''}`,
     { signal },
   );
   if (!res.ok) {
@@ -78,7 +74,7 @@ export async function fetchDevices(
 }
 
 export async function fetchFeeders(signal?: AbortSignal): Promise<FeederInfo[]> {
-  const res = await fetch(`${BASE_URL}/api/feeder/feeders`, { signal });
+  const res = await authFetch(`/api/feeder/feeders`, { signal });
   if (!res.ok) {
     throw new Error('Failed to fetch feeders');
   }
@@ -90,7 +86,7 @@ export async function createDrEvent(input: CreateDrEventInput): Promise<DrEvent>
   const tsStart = now.toISOString();
   const tsEnd = new Date(now.getTime() + input.durationMinutes * 60 * 1000).toISOString();
 
-  const res = await fetch(`${BASE_URL}/api/events`, {
+  const res = await authFetch(`/api/events`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -110,7 +106,7 @@ export async function createDrEvent(input: CreateDrEventInput): Promise<DrEvent>
 }
 
 export async function fetchDrPrograms(): Promise<DrProgram[]> {
-  const res = await fetch(`${BASE_URL}/api/dr-programs`);
+  const res = await authFetch(`/api/dr-programs`);
   if (!res.ok) {
     throw new Error('Failed to fetch DR programs');
   }
@@ -129,7 +125,7 @@ export interface DrProgramInput {
 }
 
 export async function createDrProgram(input: DrProgramInput): Promise<DrProgram> {
-  const res = await fetch(`${BASE_URL}/api/dr-programs`, {
+  const res = await authFetch(`/api/dr-programs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -142,7 +138,7 @@ export async function createDrProgram(input: DrProgramInput): Promise<DrProgram>
 }
 
 export async function updateDrProgram(id: number, input: Partial<DrProgramInput>): Promise<DrProgram> {
-  const res = await fetch(`${BASE_URL}/api/dr-programs/${id}`, {
+  const res = await authFetch(`/api/dr-programs/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -155,7 +151,7 @@ export async function updateDrProgram(id: number, input: Partial<DrProgramInput>
 }
 
 export async function deleteDrProgram(id: number): Promise<void> {
-  const res = await fetch(`${BASE_URL}/api/dr-programs/${id}`, { method: 'DELETE' });
+  const res = await authFetch(`/api/dr-programs/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) {
     const text = await res.text();
     throw new Error(`Failed to delete DR program: ${text}`);
@@ -163,7 +159,7 @@ export async function deleteDrProgram(id: number): Promise<void> {
 }
 
 export async function activateDrProgram(id: number): Promise<DrProgram> {
-  const res = await fetch(`${BASE_URL}/api/dr-programs/${id}/activate`, {
+  const res = await authFetch(`/api/dr-programs/${id}/activate`, {
     method: 'POST',
   });
   if (!res.ok) {
@@ -174,7 +170,7 @@ export async function activateDrProgram(id: number): Promise<DrProgram> {
 }
 
 export async function fetchActiveDrProgramImpact(): Promise<{ program: DrProgram | null; impact: DrImpactSnapshot | null }> {
-  const res = await fetch(`${BASE_URL}/api/dr-programs/active`);
+  const res = await authFetch(`/api/dr-programs/active`);
   if (!res.ok) {
     throw new Error('Failed to fetch active DR program');
   }
@@ -188,7 +184,7 @@ export async function fetchFeederHistory(
 ): Promise<FeederHistoryResponse> {
   const params = new URLSearchParams({ minutes: String(minutes) });
   if (feederId) params.set('feederId', feederId);
-  const res = await fetch(`${BASE_URL}/api/feeder/history?` + params.toString(), { signal });
+  const res = await authFetch(`/api/feeder/history?` + params.toString(), { signal });
   if (!res.ok) {
     throw new Error(`Failed to fetch feeder history: ${res.status}`);
   }
@@ -196,7 +192,7 @@ export async function fetchFeederHistory(
 }
 
 export async function fetchSimulationMode(): Promise<SimulationModeResponse> {
-  const res = await fetch(`${BASE_URL}/api/simulation/mode`);
+  const res = await authFetch(`/api/simulation/mode`);
   if (!res.ok) {
     throw new Error('Failed to fetch simulation mode');
   }
@@ -204,7 +200,7 @@ export async function fetchSimulationMode(): Promise<SimulationModeResponse> {
 }
 
 export async function setSimulationMode(mode: SimulationMode): Promise<SimulationModeResponse> {
-  const res = await fetch(`${BASE_URL}/api/simulation/mode`, {
+  const res = await authFetch(`/api/simulation/mode`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mode }),
@@ -217,7 +213,7 @@ export async function setSimulationMode(mode: SimulationMode): Promise<Simulatio
 }
 
 export async function resetSimulationMode(): Promise<SimulationModeResponse> {
-  const res = await fetch(`${BASE_URL}/api/simulation/mode/auto`, { method: 'POST' });
+  const res = await authFetch(`/api/simulation/mode/auto`, { method: 'POST' });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Failed to reset simulation mode: ${text}`);
@@ -226,7 +222,7 @@ export async function resetSimulationMode(): Promise<SimulationModeResponse> {
 }
 
 export async function sendTelemetry(input: TelemetryInput): Promise<void> {
-  const res = await fetch(`${BASE_URL}/api/telemetry`, {
+  const res = await authFetch(`/api/telemetry`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -259,7 +255,7 @@ export async function fetchAggregatedMetrics(
     params.set('feederId', feederId);
   }
 
-  const res = await fetch(`${BASE_URL}/api/feeder/metrics?${params.toString()}`, { signal });
+  const res = await authFetch(`/api/feeder/metrics?${params.toString()}`, { signal });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Failed to fetch aggregated metrics: ${text}`);
@@ -280,8 +276,8 @@ export async function fetchTrackingErrors(
   if (feederId) {
     params.set('feederId', feederId);
   }
-  const res = await fetch(
-    `${BASE_URL}/api/metrics/tracking-error${params.size ? `?${params.toString()}` : ''}`,
+  const res = await authFetch(
+    `/api/metrics/tracking-error${params.size ? `?${params.toString()}` : ''}`,
     { signal },
   );
   if (!res.ok) {
@@ -295,7 +291,7 @@ export async function fetchDeviceTelemetry(
   deviceId: string,
   limit = 120,
 ): Promise<DeviceTelemetry[]> {
-  const res = await fetch(`${BASE_URL}/api/telemetry/${deviceId}?limit=${limit}`);
+  const res = await authFetch(`/api/telemetry/${deviceId}?limit=${limit}`);
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Failed to fetch telemetry for ${deviceId}: ${text}`);

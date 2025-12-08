@@ -12,6 +12,7 @@ import simulationRouter from './routes/simulation';
 import { getControlLoopState } from './state/controlLoopMonitor';
 import drProgramsRouter from './routes/drPrograms';
 import metricsRouter from './routes/metrics';
+import { authRouter, requireAuth } from './auth';
 
 const swaggerHtml = `<!DOCTYPE html>
 <html>
@@ -92,6 +93,9 @@ async function startServer() {
     app.get('/api/docs', (_req, res) => {
       res.type('html').send(swaggerHtml);
     });
+
+    app.use('/api/auth', authRouter);
+    app.use('/api', requireAuth);
 
     app.use('/api/feeder', feederRouter);
     app.use('/api', devicesRouter);

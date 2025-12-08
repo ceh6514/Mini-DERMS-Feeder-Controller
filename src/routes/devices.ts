@@ -12,6 +12,7 @@ import {
   TelemetryValidationError,
   validateTelemetryPayload,
 } from '../validation/telemetry';
+import { requireRole } from '../auth';
 
 
 const router = Router();
@@ -75,7 +76,7 @@ router.get('/solar-feeders/:feederId/latest-weather', async (req, res) => {
   }
 });
 
-router.post('/telemetry', async (req, res) => {
+router.post('/telemetry', requireRole('operator'), async (req, res) => {
   try {
     const telemetry = validateTelemetryPayload(req.body ?? {});
     const device = await getDeviceById(telemetry.deviceId);

@@ -13,6 +13,8 @@ interface Props {
   feeders: FeederInfo[];
   selectedFeederId: string | null;
   onFeederChange: (feederId: string) => void;
+  username: string;
+  onLogout: () => void;
   children: React.ReactNode;
 }
 
@@ -25,6 +27,8 @@ const LayoutShell: React.FC<Props> = ({
   feeders,
   selectedFeederId,
   onFeederChange,
+  username,
+  onLogout,
   children,
 }) => {
   return (
@@ -39,6 +43,8 @@ const LayoutShell: React.FC<Props> = ({
           feeders={feeders}
           selectedFeederId={selectedFeederId}
           onFeederChange={onFeederChange}
+          username={username}
+          onLogout={onLogout}
         />
         {children}
       </main>

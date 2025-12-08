@@ -6,6 +6,7 @@ import {
   getSimulationMode,
   setSimulationMode,
 } from '../simulationState';
+import { requireRole } from '../auth';
 
 const router = Router();
 
@@ -14,7 +15,7 @@ router.get('/mode', (_req, res) => {
   res.json(mode);
 });
 
-router.post('/mode', (req, res) => {
+router.post('/mode', requireRole('operator'), (req, res) => {
   const mode = req.body?.mode as SimulationMode | undefined;
   if (mode !== 'day' && mode !== 'night') {
     res.status(400).json({ error: 'mode must be "day" or "night"' });
@@ -37,7 +38,7 @@ router.post('/mode', (req, res) => {
   res.json(updated);
 });
 
-router.post('/mode/auto', (_req, res) => {
+router.post('/mode/auto', requireRole('operator'), (_req, res) => {
   const updated = clearSimulationOverride();
   if (mqttClient?.connected) {
     try {
