@@ -53,6 +53,11 @@ If you prefer to run pieces yourself:
 
 The backend and frontend hot-reload when running locally or mounted into containers.
 
+### Observability and hardening
+- Structured logging defaults to JSON via Pino; tune `LOG_LEVEL`/`LOG_PRETTY` in `.env`. Prometheus metrics (DB, MQTT, control-loop health plus Node.js runtime stats) are available on `/metrics` when `PROMETHEUS_ENABLED=true`.
+- To enable HTTPS for the API, set `TLS_ENABLED=true` and mount `TLS_KEY_PATH`/`TLS_CERT_PATH` in the container or Kubernetes pod. The included Kubernetes manifests wire TLS via Ingress and secret mounts.
+- Runbooks for backups, failover, alerting, and secret/TLS management live in [`docs/operations.md`](docs/operations.md).
+
 ### Authentication and roles
 API routes (except `/api/health` and `/api/auth/login`) are protected by a lightweight JWT-based guard with three roles:
 

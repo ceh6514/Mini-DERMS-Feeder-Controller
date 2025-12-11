@@ -11,6 +11,7 @@ import drProgramsRouter from '../src/routes/drPrograms';
 import * as telemetryRepo from '../src/repositories/telemetryRepo';
 import * as eventsRepo from '../src/repositories/eventsRepo';
 import * as drProgramsRepo from '../src/repositories/drProgramsRepo';
+import { DrProgramInput } from '../src/repositories/drProgramsRepo';
 
 function createApp() {
   const app = express();
@@ -163,7 +164,7 @@ describe('API authentication and routing', () => {
   });
 
   it('allows operators to create and activate DR programs', async () => {
-    const createSpy = mock.method(drProgramsRepo, 'createDrProgram', async (input) => ({
+    const createSpy = mock.method(drProgramsRepo, 'createDrProgram', async (input: DrProgramInput) => ({
       id: 99,
       name: input.name,
       mode: input.mode,

@@ -7,6 +7,7 @@ import {
   TelemetryValidationError,
   validateTelemetryPayload,
 } from './validation/telemetry';
+import logger from './logger';
 
 export let mqttClient: any = null;
 let lastError: string | null = null;
@@ -46,10 +47,10 @@ async function parseAndStoreMessage(topic: string, payload: Buffer) {
     });
   } catch (err) {
     if (err instanceof TelemetryValidationError) {
-      console.warn('[mqttClient] invalid telemetry payload', err.message);
+      logger.warn('[mqttClient] invalid telemetry payload', { err });
       return;
     }
-    console.error('[mqttClient] failed to parse telemetry', err);
+    logger.error(err as Error, '[mqttClient] failed to parse telemetry');
   }
 }
 
@@ -69,16 +70,16 @@ export async function startMqttClient(): Promise<void> {
 
   mqttClient.on('connect', () => {
     lastError = null;
-    console.log(
-      '[mqttClient] connected to MQTT broker',
-      `${config.mqtt.host}:${config.mqtt.port}`
-    );
+    logger.info('[mqttClient] connected to MQTT broker', {
+      host: config.mqtt.host,
+      port: config.mqtt.port,
+    });
 
     mqttClient.subscribe('der/telemetry/#', (err: Error | null) => {
       if (err) {
-        console.error('[mqttClient] subscribe error', err);
+        logger.error({ err }, '[mqttClient] subscribe error');
       } else {
-        console.log('[mqttClient] subscribed to der/telemetry/#');
+        logger.info('[mqttClient] subscribed to der/telemetry/#');
       }
     });
   });
@@ -87,22 +88,22 @@ export async function startMqttClient(): Promise<void> {
     //Handle telemetry messages
     if (topic.startsWith('der/telemetry/')) {
       parseAndStoreMessage(topic, payload).catch((err) => {
-        console.error('[mqttClient] failed to handle telemetry message', err);
+        logger.error({ err }, '[mqttClient] failed to handle telemetry message');
       });
     }
   });
 
   mqttClient.on('error', (err: Error) => {
     lastError = err.message;
-    console.error('[mqttClient] connection error', err);
+    logger.error({ err }, '[mqttClient] connection error');
   });
 
   mqttClient.on('reconnect', () => {
-    console.warn('[mqttClient] reconnecting to broker...');
+    logger.warn('[mqttClient] reconnecting to broker...');
   });
 
   mqttClient.on('offline', () => {
-    console.warn('[mqttClient] broker offline or unreachable');
+    logger.warn('[mqttClient] broker offline or unreachable');
   });
 
   //We don't await anything here; startup should not block on MQTT

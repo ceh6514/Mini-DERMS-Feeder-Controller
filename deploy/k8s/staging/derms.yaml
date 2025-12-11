@@ -1,0 +1,195 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: derms-staging
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: derms-secrets
+  namespace: derms-staging
+stringData:
+  JWT_SECRET: "changeme-staging"
+  DB_PASSWORD: "postgres"
+  MQTT_PASSWORD: "mosquitto"
+type: Opaque
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: derms-config
+  namespace: derms-staging
+data:
+  LOG_LEVEL: info
+  PROMETHEUS_ENABLED: "true"
+  PROMETHEUS_PATH: /metrics
+  TLS_ENABLED: "true"
+  DB_HOST: derms-postgres
+  DB_PORT: "5432"
+  DB_USER: postgres
+  DB_NAME: mini_derms
+  MQTT_HOST: derms-mosquitto
+  MQTT_PORT: "1883"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: derms-postgres
+  namespace: derms-staging
+spec:
+  ports:
+    - port: 5432
+  selector:
+    app: derms-postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: derms-postgres
+  namespace: derms-staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: derms-postgres
+  template:
+    metadata:
+      labels:
+        app: derms-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: derms-config
+                  key: DB_NAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: derms-secrets
+                  key: DB_PASSWORD
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: pgdata
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: derms-mosquitto
+  namespace: derms-staging
+spec:
+  ports:
+    - port: 1883
+  selector:
+    app: derms-mosquitto
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: derms-mosquitto
+  namespace: derms-staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: derms-mosquitto
+  template:
+    metadata:
+      labels:
+        app: derms-mosquitto
+    spec:
+      containers:
+        - name: broker
+          image: eclipse-mosquitto:2
+          args: ["-c", "/mosquitto-no-auth.conf"]
+          ports:
+            - containerPort: 1883
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: derms-backend
+  namespace: derms-staging
+spec:
+  ports:
+    - port: 3001
+  selector:
+    app: derms-backend
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: derms-backend
+  namespace: derms-staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: derms-backend
+  template:
+    metadata:
+      labels:
+        app: derms-backend
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "3001"
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/example/mini-derms:staging
+          ports:
+            - containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: derms-config
+            - secretRef:
+                name: derms-secrets
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: derms-secrets
+                  key: DB_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: derms-secrets
+                  key: JWT_SECRET
+          volumeMounts:
+            - name: tls
+              mountPath: /run/tls
+      volumes:
+        - name: tls
+          secret:
+            secretName: derms-tls
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: derms
+  namespace: derms-staging
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-staging"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - derms-staging.example.com
+      secretName: derms-tls
+  rules:
+    - host: derms-staging.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: derms-backend
+                port:
+                  number: 3001
