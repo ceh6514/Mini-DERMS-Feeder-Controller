@@ -17,8 +17,19 @@ export interface MqttConfig {
 
 export interface Config {
   port: number;
+  logLevel: string;
+  logPretty: boolean;
   db: DbConfig;
   mqtt: MqttConfig;
+  tls: {
+    enabled: boolean;
+    keyPath?: string;
+    certPath?: string;
+  };
+  observability: {
+    prometheusEnabled: boolean;
+    prometheusPath: string;
+  };
   controlIntervalSeconds: number;
   feederDefaultLimitKw: number;
   defaultFeederId: string;
@@ -76,6 +87,8 @@ function parseUsers(): Config['auth']['users'] {
 
 const config: Config = {
   port: Number(process.env.PORT ?? 3001),
+  logLevel: process.env.LOG_LEVEL ?? 'info',
+  logPretty: (process.env.LOG_PRETTY ?? 'true').toLowerCase() === 'true',
   db: {
     host: process.env.DB_HOST ?? 'localhost',
     port: Number(process.env.DB_PORT ?? 5432),
@@ -86,6 +99,16 @@ const config: Config = {
   mqtt: {
     host: process.env.MQTT_HOST ?? 'localhost',
     port: Number(process.env.MQTT_PORT ?? 1883),
+  },
+  tls: {
+    enabled: (process.env.TLS_ENABLED ?? 'false').toLowerCase() === 'true',
+    keyPath: process.env.TLS_KEY_PATH,
+    certPath: process.env.TLS_CERT_PATH,
+  },
+  observability: {
+    prometheusEnabled:
+      (process.env.PROMETHEUS_ENABLED ?? 'true').toLowerCase() === 'true',
+    prometheusPath: process.env.PROMETHEUS_PATH ?? '/metrics',
   },
   controlIntervalSeconds: Number(process.env.CONTROL_INTERVAL_SECONDS ?? 60),
   feederDefaultLimitKw: Number(process.env.FEEDER_DEFAULT_LIMIT_KW ?? 250),

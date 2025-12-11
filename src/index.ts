@@ -1,5 +1,8 @@
 import express from 'express';
 import cors from 'cors';
+import fs from 'fs';
+import http from 'http';
+import https from 'https';
 import config from './config';
 import { initSchema, pool } from './db';
 import { getMqttStatus, startMqttClient } from './mqttClient';
@@ -13,6 +16,14 @@ import { getControlLoopState } from './state/controlLoopMonitor';
 import drProgramsRouter from './routes/drPrograms';
 import metricsRouter from './routes/metrics';
 import { authRouter, requireAuth } from './auth';
+import logger from './logger';
+import {
+  collectHealthMetrics,
+  metricsContentType,
+  prometheusPath,
+  renderPrometheus,
+  shouldExposePrometheus,
+} from './observability/metrics';
 
 const swaggerHtml = `<!DOCTYPE html>
 <html>
@@ -40,19 +51,16 @@ const swaggerHtml = `<!DOCTYPE html>
 
 async function startServer() {
   try {
-    console.log('[startup] initSchema starting');
+    logger.info('[startup] initSchema starting');
     await initSchema();
-    console.log('[startup] initSchema done');
+    logger.info('[startup] initSchema done');
 
     try {
-      console.log('[startup] starting MQTT client');
+      logger.info('[startup] starting MQTT client');
       await startMqttClient();
-      console.log('[startup] MQTT client started (non-blocking)');
+      logger.info('[startup] MQTT client started (non-blocking)');
     } catch (err) {
-      console.error(
-        '[startup] MQTT connect failed, continuing without broker',
-        err
-      );
+      logger.error({ err }, '[startup] MQTT connect failed, continuing without broker');
     }
 
     const app = express();
@@ -65,7 +73,7 @@ async function startServer() {
         await pool.query('SELECT 1');
       } catch (err) {
         dbOk = false;
-        console.error('[health] db check failed', err);
+        logger.error({ err }, '[health] db check failed');
       }
 
       const controlLoop = getControlLoopState();
@@ -104,15 +112,44 @@ async function startServer() {
     app.use('/api/dr-programs', drProgramsRouter);
     app.use('/api', metricsRouter);
 
-    app.listen(config.port, () => {
-      console.log(
-        `DERMS feeder controller listening on http://localhost:${config.port}`
+    if (shouldExposePrometheus()) {
+      app.get(prometheusPath(), async (_req, res) => {
+        await collectHealthMetrics();
+        res.setHeader('Content-Type', metricsContentType());
+        res.send(renderPrometheus());
+      });
+    }
+
+    let server: http.Server | https.Server;
+    if (config.tls.enabled) {
+      if (!config.tls.keyPath || !config.tls.certPath) {
+        logger.warn(
+          '[startup] TLS enabled but TLS_KEY_PATH/TLS_CERT_PATH are missing; falling back to HTTP'
+        );
+        server = http.createServer(app);
+      } else {
+        server = https.createServer(
+          {
+            key: fs.readFileSync(config.tls.keyPath),
+            cert: fs.readFileSync(config.tls.certPath),
+          },
+          app
+        );
+      }
+    } else {
+      server = http.createServer(app);
+    }
+
+    server.listen(config.port, () => {
+      const protocol = config.tls.enabled ? 'https' : 'http';
+      logger.info(
+        `DERMS feeder controller listening on ${protocol}://localhost:${config.port}`
       );
     });
 
     startControlLoop();
   } catch (err) {
-    console.error('[startup] failed to start server', err);
+    logger.error({ err }, '[startup] failed to start server');
     process.exit(1);
   }
 }
