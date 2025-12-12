@@ -73,7 +73,7 @@ describe('safety and failure handling', () => {
       Date.now(),
     );
 
-    assert.equal(published, 1);
+    assert.equal(published.success, 1);
     assert.ok(attempts >= 2);
   });
 

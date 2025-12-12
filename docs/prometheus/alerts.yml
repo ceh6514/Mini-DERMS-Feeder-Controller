@@ -1,0 +1,58 @@
+# Prometheus alerting rules for Mini-DERMS Feeder Controller
+# Tweak thresholds to align with your deployment interval and fleet size.
+
+groups:
+  - name: derms-control-loop
+    rules:
+      - alert: ControlLoopNotRunning
+        expr: derms_control_cycle_inflight == 0 and absent_over_time(derms_control_cycle_duration_seconds_count[10m])
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Control loop appears to be stalled"
+          description: |
+            The control loop has not emitted duration metrics for at least 10m. Check logs and MQTT/DB connectivity.
+
+      - alert: ControlLoopLagging
+        expr: derms_control_cycle_interval_lag_seconds > 120
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Control loop is starting late"
+          description: |
+            Control loop lag exceeded twice the configured interval. Investigate scheduler pressure or long-running cycles.
+
+      - alert: StaleTelemetryRatioHigh
+        expr: derms_devices_seen > 0 and (derms_devices_stale / derms_devices_seen) > 0.3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Too many stale devices"
+          description: |
+            More than 30% of devices reported stale telemetry for 10 minutes. Validate telemetry ingest and device connectivity.
+
+      - alert: PublishFailureRate
+        expr: |
+          (sum(rate(derms_setpoint_publish_total{result="fail"}[5m])) by () )
+            /
+          (sum(rate(derms_setpoint_publish_total[5m])) by () ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Setpoint publishes failing"
+          description: |
+            More than 5% of setpoint publishes failed in the last 5 minutes. Check MQTT broker health and credentials.
+
+      - alert: ControlLoopErrors
+        expr: rate(derms_control_cycle_errors_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Control loop reporting errors"
+          description: |
+            Errors were observed during control loop compute/publish stages. Review logs for cycle decision records.

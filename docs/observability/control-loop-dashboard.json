@@ -1,0 +1,143 @@
+{
+  "annotations": {"list": []},
+  "description": "Control-loop observability for Mini-DERMS Feeder Controller",
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "iteration": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Control Loop Overview",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "title": "Cycle duration (s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(derms_control_cycle_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        },
+        { "expr": "rate(derms_control_cycle_duration_seconds_sum[5m]) / rate(derms_control_cycle_duration_seconds_count[5m])", "legendFormat": "avg" }
+      ]
+    },
+    {
+      "title": "Cycle lag (s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "targets": [
+        { "expr": "derms_control_cycle_interval_lag_seconds", "legendFormat": "lag" }
+      ]
+    },
+    {
+      "title": "Control loop errors",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 9 },
+      "targets": [
+        { "expr": "rate(derms_control_cycle_errors_total[5m])", "legendFormat": "errors" }
+      ]
+    },
+    {
+      "title": "Inflight control cycles",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 9 },
+      "targets": [
+        { "expr": "derms_control_cycle_inflight", "legendFormat": "inflight" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Telemetry Freshness",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }
+    },
+    {
+      "title": "Fresh vs stale devices",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "derms_devices_seen", "legendFormat": "seen" },
+        { "expr": "derms_devices_fresh", "legendFormat": "fresh" },
+        { "expr": "derms_devices_stale", "legendFormat": "stale" }
+      ]
+    },
+    {
+      "title": "Telemetry age by deviceType",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.9, sum(rate(derms_telemetry_age_seconds_bucket[5m])) by (le, deviceType))",
+          "legendFormat": "{{deviceType}} p90"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Feeder Allocation",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 }
+    },
+    {
+      "title": "Headroom vs allocated",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        { "expr": "derms_feeder_headroom_kw", "legendFormat": "available" },
+        { "expr": "derms_feeder_allocated_kw", "legendFormat": "allocated" },
+        { "expr": "derms_feeder_unused_kw", "legendFormat": "unused" }
+      ]
+    },
+    {
+      "title": "Per-device allocation",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.9, sum(rate(derms_device_allocated_kw_bucket[5m])) by (le, deviceType))",
+          "legendFormat": "{{deviceType}} p90"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Publish health",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 }
+    },
+    {
+      "title": "Publish success vs failure",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 33 },
+      "targets": [
+        { "expr": "sum(rate(derms_setpoint_publish_total{result=\"success\"}[5m])) by (deviceType)", "legendFormat": "{{deviceType}} success" },
+        { "expr": "sum(rate(derms_setpoint_publish_total{result=\"fail\"}[5m])) by (deviceType)", "legendFormat": "{{deviceType}} fail" }
+      ]
+    },
+    {
+      "title": "Publish latency (s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.9, sum(rate(derms_setpoint_publish_latency_seconds_bucket[5m])) by (le, deviceType))",
+          "legendFormat": "{{deviceType}} p90"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["derms", "control-loop"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "Control Loop Observability",
+  "uid": "derms-control-loop",
+  "version": 1
+}
