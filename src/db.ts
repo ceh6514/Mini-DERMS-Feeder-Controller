@@ -1,13 +1,24 @@
 import { Pool } from 'pg';
 import config from './config';
 
-export const pool = new Pool({
+export let pool = new Pool({
   host: config.db.host,
   port: config.db.port,
   user: config.db.user,
   password: config.db.password,
   database: config.db.database,
 });
+
+export function rebuildPool() {
+  pool?.end?.().catch(() => undefined);
+  pool = new Pool({
+    host: config.db.host,
+    port: config.db.port,
+    user: config.db.user,
+    password: config.db.password,
+    database: config.db.database,
+  });
+}
 
 export async function initSchema(): Promise<void> {
   await pool.query(`
@@ -85,6 +96,17 @@ export async function initSchema(): Promise<void> {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_telemetry_recent_setpoint
       ON telemetry (device_id, ts DESC, p_setpoint_kw, soc);
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_telemetry_device_ts_unique'
+      ) THEN
+        CREATE UNIQUE INDEX idx_telemetry_device_ts_unique ON telemetry (device_id, ts);
+      END IF;
+    END$$;
   `);
 
   await pool.query(`

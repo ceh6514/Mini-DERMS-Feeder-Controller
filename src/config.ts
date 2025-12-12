@@ -13,6 +13,7 @@ export interface DbConfig {
 export interface MqttConfig {
   host: string;
   port: number;
+  topicPrefix: string;
 }
 
 export interface Config {
@@ -31,6 +32,7 @@ export interface Config {
     prometheusPath: string;
   };
   controlIntervalSeconds: number;
+  staleTelemetryThresholdSeconds: number;
   feederDefaultLimitKw: number;
   defaultFeederId: string;
   controlParams: {
@@ -151,6 +153,7 @@ const config: Config = {
   mqtt: {
     host: process.env.MQTT_HOST ?? 'localhost',
     port: Number(process.env.MQTT_PORT ?? 1883),
+    topicPrefix: (process.env.MQTT_TOPIC_PREFIX ?? 'der').replace(/\/$/, ''),
   },
   tls: {
     enabled: (process.env.TLS_ENABLED ?? 'false').toLowerCase() === 'true',
@@ -163,6 +166,9 @@ const config: Config = {
     prometheusPath: process.env.PROMETHEUS_PATH ?? '/metrics',
   },
   controlIntervalSeconds: Number(process.env.CONTROL_INTERVAL_SECONDS ?? 60),
+  staleTelemetryThresholdSeconds: Number(
+    process.env.STALE_TELEMETRY_THRESHOLD_SECONDS ?? 300,
+  ),
   feederDefaultLimitKw: Number(process.env.FEEDER_DEFAULT_LIMIT_KW ?? 250),
   defaultFeederId: process.env.DEFAULT_FEEDER_ID ?? 'default-feeder',
   controlParams: {

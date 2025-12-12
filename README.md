@@ -100,5 +100,13 @@ The agent subscribes to `der/control/<deviceId>` for setpoints and publishes tel
 ### How control works
 The feeder controller uses a weighted allocator in [`src/controllers/controlLoop.ts`](src/controllers/controlLoop.ts). Each device weight multiplies its priority with its SOC gap from reserve, accumulating a per-tick deficit bucket. At each control cycle, deficits are sorted and filled first to satisfy the most under-served devices, and any remaining feeder headroom is spread proportionally by weight.
 
+## Tests
+
+- **Unit tests**: `npm test` (build + Node.js test runner)
+- **End-to-end control path**: `npm run test:e2e`
+  - Requires Docker with access to pull `postgres:16-alpine` and `eclipse-mosquitto:2`.
+  - The suite launches ephemeral containers and a broker topic prefix like `derms-test/<timestamp>-<uuid>` so parallel runs do not clash.
+  - You can override the MQTT topic prefix via `MQTT_TOPIC_PREFIX` and telemetry freshness threshold via `STALE_TELEMETRY_THRESHOLD_SECONDS` if needed.
+
 ## Data lifecycle
 On startup, the service initializes the `devices`, `telemetry`, `events`, and `dr_programs` tables (see `src/db.ts`). The control loop and MQTT ingest operate continuously once the server is running.
