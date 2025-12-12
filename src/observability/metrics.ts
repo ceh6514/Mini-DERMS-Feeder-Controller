@@ -12,7 +12,16 @@ type GaugeMetricName =
   | 'derms_control_loop_offline_devices'
   | 'derms_stale_telemetry_dropped_total'
   | 'derms_control_degraded'
-  | 'derms_control_stopped';
+  | 'derms_control_stopped'
+  | 'derms_control_cycle_interval_lag_seconds'
+  | 'derms_control_cycle_inflight'
+  | 'derms_devices_seen'
+  | 'derms_devices_fresh'
+  | 'derms_devices_stale'
+  | 'derms_feeder_headroom_kw'
+  | 'derms_feeder_allocated_kw'
+  | 'derms_feeder_unused_kw'
+  | 'derms_setpoint_inflight';
 
 type CounterMetricName =
   | 'derms_stale_telemetry_total'
@@ -23,9 +32,17 @@ type CounterMetricName =
   | 'derms_contract_validation_fail_total'
   | 'derms_contract_version_reject_total'
   | 'derms_duplicate_message_total'
-  | 'derms_out_of_order_total';
+  | 'derms_out_of_order_total'
+  | 'derms_control_cycle_errors_total'
+  | 'derms_setpoint_publish_total'
+  | 'derms_setpoint_ack_total';
 
-type HistogramMetricName = 'derms_mqtt_publish_latency_ms';
+type HistogramMetricName =
+  | 'derms_mqtt_publish_latency_ms'
+  | 'derms_setpoint_publish_latency_seconds'
+  | 'derms_control_cycle_duration_seconds'
+  | 'derms_telemetry_age_seconds'
+  | 'derms_device_allocated_kw';
 
 type MetricDef = { help: string; type: 'gauge' | 'counter' | 'histogram' };
 const metricDefs: Record<GaugeMetricName | CounterMetricName | HistogramMetricName, MetricDef> = {
@@ -48,6 +65,18 @@ const metricDefs: Record<GaugeMetricName | CounterMetricName | HistogramMetricNa
     help: 'Control loop stopped because of safety policy',
     type: 'gauge',
   },
+  derms_control_cycle_interval_lag_seconds: {
+    help: 'Difference between expected and actual control loop start time (seconds)',
+    type: 'gauge',
+  },
+  derms_control_cycle_inflight: { help: 'Control loop currently running (0/1)', type: 'gauge' },
+  derms_devices_seen: { help: 'Devices seen this control cycle', type: 'gauge' },
+  derms_devices_fresh: { help: 'Devices with fresh telemetry this cycle', type: 'gauge' },
+  derms_devices_stale: { help: 'Devices with stale telemetry this cycle', type: 'gauge' },
+  derms_feeder_headroom_kw: { help: 'Feeder headroom available for allocation (kW)', type: 'gauge' },
+  derms_feeder_allocated_kw: { help: 'Allocated feeder headroom (kW)', type: 'gauge' },
+  derms_feeder_unused_kw: { help: 'Unused feeder headroom (kW)', type: 'gauge' },
+  derms_setpoint_inflight: { help: 'Setpoints currently in-flight (0/1)', type: 'gauge' },
   derms_stale_telemetry_total: {
     help: 'Count of stale telemetry samples by device',
     type: 'counter',
@@ -81,8 +110,36 @@ const metricDefs: Record<GaugeMetricName | CounterMetricName | HistogramMetricNa
     help: 'Count of out-of-order messages observed per message type',
     type: 'counter',
   },
+  derms_control_cycle_errors_total: {
+    help: 'Control loop errors grouped by stage (ingest|compute|publish|db)',
+    type: 'counter',
+  },
+  derms_setpoint_publish_total: {
+    help: 'Setpoint publish attempts grouped by result and deviceType',
+    type: 'counter',
+  },
+  derms_setpoint_ack_total: {
+    help: 'Setpoint acknowledgements grouped by result and deviceType',
+    type: 'counter',
+  },
   derms_mqtt_publish_latency_ms: {
     help: 'Latency histogram for MQTT publish operations (ms)',
+    type: 'histogram',
+  },
+  derms_setpoint_publish_latency_seconds: {
+    help: 'Latency histogram for setpoint publishes (seconds)',
+    type: 'histogram',
+  },
+  derms_control_cycle_duration_seconds: {
+    help: 'Duration of a full control loop cycle (seconds)',
+    type: 'histogram',
+  },
+  derms_telemetry_age_seconds: {
+    help: 'Age of telemetry samples by device type (seconds)',
+    type: 'histogram',
+  },
+  derms_device_allocated_kw: {
+    help: 'Allocated power per device by device type (kW)',
     type: 'histogram',
   },
 };
@@ -95,6 +152,15 @@ const gaugeValues: Record<GaugeMetricName, number> = {
   derms_stale_telemetry_dropped_total: 0,
   derms_control_degraded: 0,
   derms_control_stopped: 0,
+  derms_control_cycle_interval_lag_seconds: 0,
+  derms_control_cycle_inflight: 0,
+  derms_devices_seen: 0,
+  derms_devices_fresh: 0,
+  derms_devices_stale: 0,
+  derms_feeder_headroom_kw: 0,
+  derms_feeder_allocated_kw: 0,
+  derms_feeder_unused_kw: 0,
+  derms_setpoint_inflight: 0,
 };
 
 const labeledGauges: Record<Extract<GaugeMetricName, 'derms_control_degraded' | 'derms_control_stopped'>, Map<string, number>> = {
@@ -112,15 +178,37 @@ const labeledCounters: Record<CounterMetricName, Map<string, number>> = {
   derms_contract_version_reject_total: new Map(),
   derms_duplicate_message_total: new Map(),
   derms_out_of_order_total: new Map(),
+  derms_control_cycle_errors_total: new Map(),
+  derms_setpoint_publish_total: new Map(),
+  derms_setpoint_ack_total: new Map(),
 };
 
-const histogramBuckets = [50, 100, 250, 500, 1000, 2000, 5000];
-const histograms: Record<HistogramMetricName, { buckets: number[]; counts: number[]; sum: number; count: number }> = {
+const histogramBucketsMs = [50, 100, 250, 500, 1000, 2000, 5000];
+const histogramBucketsSeconds = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60];
+const histogramBucketsKw = [0.1, 0.5, 1, 2, 5, 10, 25, 50, 100];
+
+type HistogramStore = { buckets: number[]; counts: number[]; sum: number; count: number };
+
+const histograms: Record<HistogramMetricName, { buckets: number[]; data: Map<string, HistogramStore> }> = {
   derms_mqtt_publish_latency_ms: {
-    buckets: histogramBuckets,
-    counts: histogramBuckets.map(() => 0),
-    sum: 0,
-    count: 0,
+    buckets: histogramBucketsMs,
+    data: new Map(),
+  },
+  derms_setpoint_publish_latency_seconds: {
+    buckets: histogramBucketsSeconds,
+    data: new Map(),
+  },
+  derms_control_cycle_duration_seconds: {
+    buckets: histogramBucketsSeconds,
+    data: new Map(),
+  },
+  derms_telemetry_age_seconds: {
+    buckets: histogramBucketsSeconds,
+    data: new Map(),
+  },
+  derms_device_allocated_kw: {
+    buckets: histogramBucketsKw,
+    data: new Map(),
   },
 };
 
@@ -158,14 +246,27 @@ function renderLabeledCounters(name: CounterMetricName): string[] {
 function renderHistograms(name: HistogramMetricName): string[] {
   const lines: string[] = [];
   const hist = histograms[name];
-  let cumulative = 0;
-  hist.buckets.forEach((bucket, idx) => {
-    cumulative += hist.counts[idx];
-    lines.push(`${name}_bucket{le="${bucket}"} ${cumulative}`);
+  hist.data.forEach((store, labelKey) => {
+    let cumulative = 0;
+    store.buckets.forEach((bucket, idx) => {
+      cumulative += store.counts[idx];
+      const labels = labelKey ? `${labelKey.slice(0, -1)},le="${bucket}"}` : `{le="${bucket}"}`;
+      lines.push(`${name}_bucket${labels} ${cumulative}`);
+    });
+    const labels = labelKey ? `${labelKey.slice(0, -1)},le="+Inf"}` : '{le="+Inf"}';
+    lines.push(`${name}_bucket${labels} ${store.count}`);
+    lines.push(`${name}_sum${labelKey} ${store.sum}`);
+    lines.push(`${name}_count${labelKey} ${store.count}`);
   });
-  lines.push(`${name}_bucket{le="+Inf"} ${hist.count}`);
-  lines.push(`${name}_sum ${hist.sum}`);
-  lines.push(`${name}_count ${hist.count}`);
+  if (hist.data.size === 0) {
+    const buckets = hist.buckets;
+    buckets.forEach((bucket) => {
+      lines.push(`${name}_bucket{le="${bucket}"} 0`);
+    });
+    lines.push(`${name}_bucket{le="+Inf"} 0`);
+    lines.push(`${name}_sum 0`);
+    lines.push(`${name}_count 0`);
+  }
   return lines;
 }
 
@@ -216,6 +317,10 @@ function labelsToKey(labels: Record<string, string | number>): string {
   return parts.length ? `{${parts.join(',')}}` : '';
 }
 
+export function setGaugeValue(name: Exclude<GaugeMetricName, 'derms_control_degraded' | 'derms_control_stopped'>, value: number) {
+  gaugeValues[name] = value;
+}
+
 export function incrementCounter(
   name: CounterMetricName,
   labels: Record<string, string | number> = {},
@@ -235,13 +340,28 @@ export function setGauge(
   labeledGauges[name].set(key, value);
 }
 
-export function observeHistogram(name: HistogramMetricName, valueMs: number): void {
+export function observeHistogram(
+  name: HistogramMetricName,
+  value: number,
+  labels: Record<string, string | number> = {},
+): void {
   const hist = histograms[name];
-  hist.count += 1;
-  hist.sum += valueMs;
-  hist.buckets.forEach((bucket, idx) => {
-    if (valueMs <= bucket) {
-      hist.counts[idx] += 1;
+  const key = labelsToKey(labels);
+  if (!hist.data.has(key)) {
+    hist.data.set(key, {
+      buckets: [...hist.buckets],
+      counts: hist.buckets.map(() => 0),
+      sum: 0,
+      count: 0,
+    });
+  }
+
+  const store = hist.data.get(key)!;
+  store.count += 1;
+  store.sum += value;
+  store.buckets.forEach((bucket, idx) => {
+    if (value <= bucket) {
+      store.counts[idx] += 1;
     }
   });
 }
@@ -262,8 +382,6 @@ export function resetMetricsForTest(): void {
 
   (Object.keys(histograms) as HistogramMetricName[]).forEach((name) => {
     const hist = histograms[name];
-    hist.count = 0;
-    hist.sum = 0;
-    hist.counts = hist.counts.map(() => 0);
+    hist.data.clear();
   });
 }

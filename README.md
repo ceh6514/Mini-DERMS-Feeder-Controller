@@ -55,7 +55,8 @@ If you prefer to run pieces yourself:
 The backend and frontend hot-reload when running locally or mounted into containers.
 
 ### Observability and hardening
-- Structured logging defaults to JSON via Pino; tune `LOG_LEVEL`/`LOG_PRETTY` in `.env`. Prometheus metrics (DB, MQTT, control-loop health plus Node.js runtime stats) are available on `/metrics` when `PROMETHEUS_ENABLED=true`.
+- Structured logging defaults to JSON via Pino; tune `LOG_LEVEL`/`LOG_PRETTY` in `.env`. Prometheus metrics (DB, MQTT, control-loop health, timing, telemetry freshness, allocation outcomes, and publish latency) are available on `/metrics` when `PROMETHEUS_ENABLED=true`. Control-cycle decision records emit one JSON line per iteration; set `DECISION_LOG_LEVEL=debug` to include per-device allocations inline.
+- Import the Grafana dashboard at [`docs/observability/control-loop-dashboard.json`](docs/observability/control-loop-dashboard.json) to visualize cycle lag/duration, stale device ratios, headroom usage, and publish success. Prometheus alert examples live in [`docs/prometheus/alerts.yml`](docs/prometheus/alerts.yml) covering stalled loops, lag, stale fleets, and publish failures.
 - To enable HTTPS for the API, set `TLS_ENABLED=true` and mount `TLS_KEY_PATH`/`TLS_CERT_PATH` in the container or Kubernetes pod. The included Kubernetes manifests wire TLS via Ingress and secret mounts.
 - Runbooks for backups, failover, alerting, and secret/TLS management live in [`docs/operations.md`](docs/operations.md).
 

@@ -30,6 +30,7 @@ export interface Config {
   observability: {
     prometheusEnabled: boolean;
     prometheusPath: string;
+    decisionLogLevel: 'info' | 'debug';
   };
   controlIntervalSeconds: number;
   staleTelemetryThresholdSeconds: number;
@@ -164,6 +165,9 @@ const config: Config = {
     prometheusEnabled:
       (process.env.PROMETHEUS_ENABLED ?? 'true').toLowerCase() === 'true',
     prometheusPath: process.env.PROMETHEUS_PATH ?? '/metrics',
+    decisionLogLevel: (process.env.DECISION_LOG_LEVEL ?? 'info').toLowerCase() === 'debug'
+      ? 'debug'
+      : 'info',
   },
   controlIntervalSeconds: Number(process.env.CONTROL_INTERVAL_SECONDS ?? 60),
   staleTelemetryThresholdSeconds: Number(

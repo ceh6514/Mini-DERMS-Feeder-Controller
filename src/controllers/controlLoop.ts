@@ -31,7 +31,13 @@ import {
   recordFailure,
   recordSuccess,
 } from '../state/safetyState';
-import { incrementCounter, observeHistogram, setGauge } from '../observability/metrics';
+import {
+  incrementCounter,
+  observeHistogram,
+  setGauge,
+  setGaugeValue,
+} from '../observability/metrics';
+import { DecisionRecordBuilder, DeviceDecisionRecord } from '../observability/decisionRecord';
 import logger from '../logger';
 
 // Track the most recent setpoint we have commanded for each device.
@@ -45,6 +51,32 @@ export interface ControlLoopIterationResult {
   staleTelemetryDropped: number;
   timestampIso: string;
 }
+
+type PublishResult = {
+  attempted: number;
+  success: number;
+  failed: number;
+  failures: { deviceId: string; deviceType: string; reason: string }[];
+};
+
+type FeederCycleResult = {
+  feederId: string;
+  commandsPublished: number;
+  staleTelemetryDropped: number;
+  deviceDecisions: DeviceDecisionRecord[];
+  inputs: { deviceCountSeen: number; deviceCountFresh: number; deviceCountStale: number; staleThresholdMs: number };
+  headroom: {
+    headroomKwAvailable: number;
+    headroomKwAllocated: number;
+    headroomKwUnused: number;
+    limitingConstraint?: string;
+  };
+  publish: PublishResult;
+};
+
+const cycleState = {
+  lastCycleStartMs: 0,
+};
 
 export type DeviceWithTelemetry = DeviceState & {
   telemetry: TelemetryRow;
@@ -329,19 +361,29 @@ async function publishCommands(
   logContext: string,
   nowMs: number,
 
-): Promise<number> {
-  if (commands.length === 0) return 0;
+): Promise<PublishResult> {
+  if (commands.length === 0)
+    return { attempted: 0, success: 0, failed: 0, failures: [] };
 
   if (!mqttClient || !mqttClient.connected) {
     console.warn(
       `[controlLoop] MQTT not connected, skipping publish this tick (${logContext})`
     );
     incrementCounter('derms_mqtt_disconnect_total');
-    return 0;
+    for (const cmd of commands) {
+      incrementCounter('derms_setpoint_publish_total', {
+        result: 'fail',
+        deviceType: cmd.deviceType,
+      });
+    }
+    return { attempted: commands.length, success: 0, failed: commands.length, failures: [] };
   }
 
   const prefix = config.mqtt.topicPrefix.replace(/\/+$/, '');
   let published = 0;
+  let failed = 0;
+  const failures: PublishResult['failures'] = [];
+  setGaugeValue('derms_setpoint_inflight', 1);
 
   for (const cmd of commands) {
     try {
@@ -396,19 +438,39 @@ async function publishCommands(
           { deviceId: cmd.deviceId, err: lastError as Record<string, unknown> },
           '[controlLoop] failed to publish command',
         );
+        failed += 1;
+        failures.push({ deviceId: cmd.deviceId, deviceType: cmd.deviceType, reason: 'broker_error' });
+        incrementCounter('derms_setpoint_publish_total', {
+          result: 'fail',
+          deviceType: cmd.deviceType,
+        });
         continue;
       }
 
       deviceSetpoints.set(cmd.deviceId, cmd.newSetpoint);
       recordCommand(cmd.deviceId, cmd.newSetpoint, nowMs);
       published += 1;
+      incrementCounter('derms_setpoint_publish_total', {
+        result: 'success',
+        deviceType: cmd.deviceType,
+      });
+      observeHistogram('derms_setpoint_publish_latency_seconds', latency / 1000, {
+        deviceType: cmd.deviceType,
+      });
     } catch (err) {
       console.error('[controlLoop] failed to publish command', err);
+      failed += 1;
+      failures.push({ deviceId: cmd.deviceId, deviceType: cmd.deviceType, reason: 'publish_error' });
       incrementCounter('derms_mqtt_publish_fail_total', { device_id: cmd.deviceId });
+      incrementCounter('derms_setpoint_publish_total', {
+        result: 'fail',
+        deviceType: cmd.deviceType,
+      });
     }
   }
 
-  return published;
+  setGaugeValue('derms_setpoint_inflight', 0);
+  return { attempted: commands.length, success: published, failed, failures };
 }
 
 export const publishCommandsForTest = publishCommands;
@@ -442,10 +504,19 @@ async function runFeederTick(
   now: Date,
   offlineDevices: Set<string>,
   devices: Device[],
-): Promise<{ commandsPublished: number; staleTelemetryDropped: number }> {
+): Promise<FeederCycleResult> {
   const limitKw = await getCurrentFeederLimit(now, feederId);
   const latest = await getLatestTelemetryPerDevice(feederId);
   const { fresh, stale } = partitionTelemetry(latest, now.getTime());
+  for (const row of latest) {
+    const ts = row.ts instanceof Date ? row.ts.getTime() : new Date(row.ts).getTime();
+    observeHistogram('derms_telemetry_age_seconds', (now.getTime() - ts) / 1000, {
+      deviceType: row.type,
+    });
+  }
+  const policy = getSafetyPolicy();
+  const staleThresholdMs = policy.telemetryStaleMs;
+  const deviceDecisions: DeviceDecisionRecord[] = [];
   const feederDevices = devices.filter((device) => device.feederId === feederId);
   const deviceLookup = buildDeviceLookup(feederDevices);
   const priorityLookup = new Map(
@@ -491,7 +562,6 @@ async function runFeederTick(
     }
   }
 
-  const policy = getSafetyPolicy();
   const fallbackCommands: {
     deviceId: string;
     deviceType: string;
@@ -499,11 +569,20 @@ async function runFeederTick(
     prevSetpoint: number;
   }[] = [];
   const excludedIds = new Set<string>();
+  let publishResult: PublishResult = { attempted: 0, success: 0, failed: 0, failures: [] };
+  let headroomSummary = {
+    headroomKwAvailable: limitKw,
+    headroomKwAllocated: 0,
+    headroomKwUnused: limitKw,
+    limitingConstraint: 'NONE' as string | undefined,
+  };
 
   const handleMissing = (
     deviceId: string,
     behavior: TelemetryMissingBehavior,
     deviceType: string,
+    telemetryAgeMs: number | null,
+    reasonCode: 'STALE_TELEMETRY' | 'MISSING_TELEMETRY',
   ) => {
     const last = getCurrentSetpoint(deviceId, {
       device_id: deviceId,
@@ -530,14 +609,42 @@ async function runFeederTick(
       newSetpoint: target,
       prevSetpoint: last,
     });
+    deviceDecisions.push({
+      deviceId,
+      deviceType,
+      telemetryAgeMs: telemetryAgeMs ?? staleThresholdMs,
+      soc: null,
+      priority: priorityLookup.get(deviceId) ?? 1,
+      caps: { maxChargeKw: null, maxDischargeKw: null },
+      requestedKw: last,
+      eligibleKw: 0,
+      allocatedKw: target,
+      reasonCodes: [reasonCode],
+      setpoint: {
+        targetPowerKw: target,
+        validUntilMs: now.getTime() + policy.holdLastMaxMs,
+      },
+    });
   };
 
   for (const row of stale) {
-    handleMissing(row.device_id, policy.telemetryMissingBehavior, row.type);
+    handleMissing(
+      row.device_id,
+      policy.telemetryMissingBehavior,
+      row.type,
+      now.getTime() - row.ts.getTime(),
+      'STALE_TELEMETRY',
+    );
   }
   for (const missing of missingDeviceIds) {
     const deviceMeta = feederDevices.find((d) => d.id === missing);
-    handleMissing(missing, policy.telemetryMissingBehavior, deviceMeta?.type ?? 'unknown');
+    handleMissing(
+      missing,
+      policy.telemetryMissingBehavior,
+      deviceMeta?.type ?? 'unknown',
+      null,
+      'MISSING_TELEMETRY',
+    );
   }
 
   const onlineTelemetry = fresh.filter(
@@ -545,13 +652,26 @@ async function runFeederTick(
   );
 
   if (onlineTelemetry.length === 0) {
-    const publishedFallback = await publishCommands(
+    publishResult = await publishCommands(
       fallbackCommands,
       `feeder=${feederId} fallback_only`,
       now.getTime(),
     );
     console.log(`[controlLoop:${feederId}] no telemetry yet, publishing safe defaults`);
-    return { commandsPublished: publishedFallback, staleTelemetryDropped: stale.length };
+    return {
+      feederId,
+      commandsPublished: publishResult.success,
+      staleTelemetryDropped: stale.length,
+      deviceDecisions,
+      inputs: {
+        deviceCountSeen: latest.length,
+        deviceCountFresh: fresh.length,
+        deviceCountStale: stale.length,
+        staleThresholdMs,
+      },
+      headroom: headroomSummary,
+      publish: publishResult,
+    };
   }
 
   const totalKw = onlineTelemetry.reduce((sum, row) => sum + (row.p_actual_kw || 0), 0);
@@ -571,12 +691,25 @@ async function runFeederTick(
 
   if (evDevices.length === 0) {
     console.log(`[controlLoop:${feederId}] no dispatchable devices found, skipping control`);
-    const publishedFallback = await publishCommands(
+    publishResult = await publishCommands(
       fallbackCommands,
       `feeder=${feederId} no_dispatchable`,
       now.getTime(),
     );
-    return { commandsPublished: publishedFallback, staleTelemetryDropped: stale.length };
+    return {
+      feederId,
+      commandsPublished: publishResult.success,
+      staleTelemetryDropped: stale.length,
+      deviceDecisions,
+      inputs: {
+        deviceCountSeen: latest.length,
+        deviceCountFresh: fresh.length,
+        deviceCountStale: stale.length,
+        staleThresholdMs,
+      },
+      headroom: headroomSummary,
+      publish: publishResult,
+    };
   }
 
   for (const ev of evDevices) {
@@ -601,6 +734,20 @@ async function runFeederTick(
     effectiveAvailableForEv,
     config.controlParams,
   );
+  const totalAllowedKw = [...allowedShares.values()].reduce((sum, val) => sum + val, 0);
+  headroomSummary = {
+    headroomKwAvailable: effectiveAvailableForEv,
+    headroomKwAllocated: totalAllowedKw,
+    headroomKwUnused: Math.max(0, effectiveAvailableForEv - totalAllowedKw),
+    limitingConstraint:
+      shedApplied > 0
+        ? 'DR_SHED'
+        : overloaded
+        ? 'HEADROOM_LIMIT'
+        : hasHeadroom
+        ? 'DEVICE_CAP'
+        : 'BALANCED',
+  };
   const perDeviceImpact = evDevices.map((ev) => {
     const allowed = allowedShares.get(ev.id) ?? ev.currentSetpointKw;
     const utilization = ev.pMaxKw > 0 ? Math.min(Math.max(allowed / ev.pMaxKw, 0), 1) : 0;
@@ -637,10 +784,7 @@ async function runFeederTick(
     feederId,
   });
 
-  if (!overloaded && !hasHeadroom) {
-    console.log(`[controlLoop:${feederId}] within margin, no changes`);
-    return { commandsPublished: 0, staleTelemetryDropped: stale.length };
-  }
+  const withinMargin = !overloaded && !hasHeadroom;
 
   const commands: {
     deviceId: string;
@@ -670,6 +814,10 @@ async function runFeederTick(
       target = Math.min(ev.pMaxKw, Math.max(previous + stepKw, allowedShare));
     }
 
+    if (withinMargin) {
+      target = previous;
+    }
+
     target = Math.min(Math.max(0, target), ev.pMaxKw);
 
     const delta = target - previous;
@@ -692,7 +840,29 @@ async function runFeederTick(
       pMax: ev.pMaxKw,
     });
 
-    if (Math.abs(newSetpoint - previous) > epsilon) {
+    deviceDecisions.push({
+      deviceId: ev.id,
+      deviceType: ev.type,
+      telemetryAgeMs: now.getTime() - ev.telemetry.ts.getTime(),
+      soc: ev.soc,
+      priority: ev.priority,
+      caps: { maxChargeKw: ev.pMaxKw, maxDischargeKw: ev.pMaxKw },
+      requestedKw: ev.currentSetpointKw,
+      eligibleKw: ev.pMaxKw,
+      allocatedKw: newSetpoint,
+      reasonCodes: [
+        ...(overloaded ? ['HEADROOM_LIMIT'] : []),
+        ...(hasHeadroom ? ['HEADROOM_AVAILABLE'] : []),
+        ...(withinMargin ? ['STEADY_STATE'] : []),
+      ],
+      setpoint: {
+        targetPowerKw: newSetpoint,
+        validUntilMs: now.getTime() + policy.holdLastMaxMs,
+      },
+    });
+    observeHistogram('derms_device_allocated_kw', newSetpoint, { deviceType: ev.type });
+
+    if (!withinMargin && Math.abs(newSetpoint - previous) > epsilon) {
       commands.push({
         deviceId: ev.id,
         deviceType: ev.type,
@@ -742,11 +912,12 @@ async function runFeederTick(
       'ev deficits',
       deficitSummaries,
     );
-    published = await publishCommands(
+    publishResult = await publishCommands(
       [...fallbackCommands, ...commands],
       `feeder=${feederId} total=${totalKw.toFixed(2)} limit=${limitKw.toFixed(2)} availableForEv=${availableForEv.toFixed(2)} effective=${effectiveAvailableForEv.toFixed(2)}`,
       now.getTime(),
     );
+    published = publishResult.success;
   } else {
     const deficitSummaries = deviceLogs.map((log) => ({
       id: log.id,
@@ -760,13 +931,35 @@ async function runFeederTick(
     console.log(`[controlLoop:${feederId}] no setpoint changes beyond epsilon`, deficitSummaries);
   }
 
-  return { commandsPublished: published, staleTelemetryDropped: stale.length };
+  return {
+    feederId,
+    commandsPublished: published,
+    staleTelemetryDropped: stale.length,
+    deviceDecisions,
+    inputs: {
+      deviceCountSeen: latest.length,
+      deviceCountFresh: fresh.length,
+      deviceCountStale: stale.length,
+      staleThresholdMs,
+    },
+    headroom: headroomSummary,
+    publish: publishResult,
+  };
 }
 
 export async function runControlLoopCycle(
   now = new Date(),
 ): Promise<ControlLoopIterationResult> {
   const nowMs = now.getTime();
+  const expectedStartMs =
+    cycleState.lastCycleStartMs > 0
+      ? cycleState.lastCycleStartMs + config.controlIntervalSeconds * 1000
+      : nowMs;
+  const lagSeconds = Math.max(0, (nowMs - expectedStartMs) / 1000);
+  setGaugeValue('derms_control_cycle_interval_lag_seconds', lagSeconds);
+  setGaugeValue('derms_control_cycle_inflight', 1);
+  cycleState.lastCycleStartMs = nowMs;
+  const decisionBuilder = new DecisionRecordBuilder(nowMs);
   const stalledState = shouldAlertStall(nowMs);
   if (stalledState) {
     notifyStalledLoop(stalledState);
@@ -782,6 +975,15 @@ export async function runControlLoopCycle(
   let commandsPublished = 0;
   let staleTelemetryDropped = 0;
   let offlineDevices: Set<string> = new Set();
+  let devicesSeen = 0;
+  let devicesFresh = 0;
+  let devicesStale = 0;
+  let headroomAvailableSum = 0;
+  let headroomAllocatedSum = 0;
+  let headroomUnusedSum = 0;
+  let publishAttempted = 0;
+  let publishFailed = 0;
+  let publishSucceeded = 0;
 
   try {
     offlineDevices = getOfflineDeviceIds(nowMs);
@@ -796,6 +998,35 @@ export async function runControlLoopCycle(
       const result = await runFeederTick(feederId, now, offlineDevices, devices);
       commandsPublished += result.commandsPublished;
       staleTelemetryDropped += result.staleTelemetryDropped;
+      devicesSeen += result.inputs.deviceCountSeen;
+      devicesFresh += result.inputs.deviceCountFresh;
+      devicesStale += result.inputs.deviceCountStale;
+      headroomAvailableSum += result.headroom.headroomKwAvailable;
+      headroomAllocatedSum += result.headroom.headroomKwAllocated;
+      headroomUnusedSum += result.headroom.headroomKwUnused;
+      publishAttempted += result.publish.attempted;
+      publishFailed += result.publish.failed;
+      publishSucceeded += result.publish.success;
+      decisionBuilder.addFeeder({
+        feederId,
+        headroomKwAvailable: result.headroom.headroomKwAvailable,
+        headroomKwAllocated: result.headroom.headroomKwAllocated,
+        headroomKwUnused: result.headroom.headroomKwUnused,
+        limitingConstraint: result.headroom.limitingConstraint,
+        inputs: result.inputs,
+        devices: result.deviceDecisions,
+        publish: {
+          attemptedCount: result.publish.attempted,
+          successCount: result.publish.success,
+          failCount: result.publish.failed,
+          failures: result.publish.failures.map((f) => ({
+            deviceType: f.deviceType,
+            reason: f.reason,
+            deviceId:
+              config.observability.decisionLogLevel === 'debug' ? f.deviceId : undefined,
+          })),
+        },
+      });
     }
     recordSuccess();
   } catch (err) {
@@ -803,11 +1034,24 @@ export async function runControlLoopCycle(
     recordFailure(getSafetyPolicy(), 'db', 'loop_error');
     markIterationError(err, Date.now());
     console.error('[controlLoop] error', err);
+    incrementCounter('derms_control_cycle_errors_total', { stage: 'compute' });
     incrementCounter('derms_db_error_total', { operation: 'read' });
   } finally {
     if (!errored) {
       markIterationSuccess(Date.now());
     }
+    const finishedAtMs = Date.now();
+    setGaugeValue('derms_devices_seen', devicesSeen);
+    setGaugeValue('derms_devices_fresh', devicesFresh);
+    setGaugeValue('derms_devices_stale', devicesStale);
+    setGaugeValue('derms_feeder_headroom_kw', headroomAvailableSum);
+    setGaugeValue('derms_feeder_allocated_kw', headroomAllocatedSum);
+    setGaugeValue('derms_feeder_unused_kw', headroomUnusedSum);
+    observeHistogram('derms_control_cycle_duration_seconds', (finishedAtMs - nowMs) / 1000);
+    setGaugeValue('derms_control_cycle_inflight', 0);
+
+    const record = decisionBuilder.finalize(finishedAtMs);
+    decisionBuilder.log(record);
   }
 
   const statusSnapshot = getControlStatus();
