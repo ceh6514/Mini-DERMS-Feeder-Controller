@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { mqttClient } from '../mqttClient';
+import config from '../config';
 import {
   SimulationMode,
   clearSimulationOverride,
@@ -27,7 +28,7 @@ router.post('/mode', requireRole('operator'), (req, res) => {
   if (mqttClient?.connected) {
     try {
       mqttClient.publish(
-        'der/simulation/profile',
+        `${config.mqtt.topicPrefix}/simulation/profile`,
         JSON.stringify({ profile: updated.mode, source: updated.source })
       );
     } catch (err) {
@@ -43,7 +44,7 @@ router.post('/mode/auto', requireRole('operator'), (_req, res) => {
   if (mqttClient?.connected) {
     try {
       mqttClient.publish(
-        'der/simulation/profile',
+        `${config.mqtt.topicPrefix}/simulation/profile`,
         JSON.stringify({ profile: updated.mode, source: updated.source })
       );
     } catch (err) {

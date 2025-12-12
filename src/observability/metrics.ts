@@ -19,7 +19,11 @@ type CounterMetricName =
   | 'derms_missing_telemetry_total'
   | 'derms_mqtt_disconnect_total'
   | 'derms_mqtt_publish_fail_total'
-  | 'derms_db_error_total';
+  | 'derms_db_error_total'
+  | 'derms_contract_validation_fail_total'
+  | 'derms_contract_version_reject_total'
+  | 'derms_duplicate_message_total'
+  | 'derms_out_of_order_total';
 
 type HistogramMetricName = 'derms_mqtt_publish_latency_ms';
 
@@ -61,6 +65,22 @@ const metricDefs: Record<GaugeMetricName | CounterMetricName | HistogramMetricNa
     type: 'counter',
   },
   derms_db_error_total: { help: 'Total DB errors grouped by operation', type: 'counter' },
+  derms_contract_validation_fail_total: {
+    help: 'Count of contract validation failures grouped by messageType/reason',
+    type: 'counter',
+  },
+  derms_contract_version_reject_total: {
+    help: 'Count of messages rejected because of incompatible schema version',
+    type: 'counter',
+  },
+  derms_duplicate_message_total: {
+    help: 'Count of duplicated messages discarded because of idempotency rules',
+    type: 'counter',
+  },
+  derms_out_of_order_total: {
+    help: 'Count of out-of-order messages observed per message type',
+    type: 'counter',
+  },
   derms_mqtt_publish_latency_ms: {
     help: 'Latency histogram for MQTT publish operations (ms)',
     type: 'histogram',
@@ -88,6 +108,10 @@ const labeledCounters: Record<CounterMetricName, Map<string, number>> = {
   derms_mqtt_disconnect_total: new Map(),
   derms_mqtt_publish_fail_total: new Map(),
   derms_db_error_total: new Map(),
+  derms_contract_validation_fail_total: new Map(),
+  derms_contract_version_reject_total: new Map(),
+  derms_duplicate_message_total: new Map(),
+  derms_out_of_order_total: new Map(),
 };
 
 const histogramBuckets = [50, 100, 250, 500, 1000, 2000, 5000];
@@ -219,5 +243,27 @@ export function observeHistogram(name: HistogramMetricName, valueMs: number): vo
     if (valueMs <= bucket) {
       hist.counts[idx] += 1;
     }
+  });
+}
+
+export function resetMetricsForTest(): void {
+  (Object.keys(gaugeValues) as GaugeMetricName[]).forEach((name) => {
+    gaugeValues[name] = 0;
+  });
+
+  (Object.keys(labeledGauges) as Extract<
+    GaugeMetricName,
+    'derms_control_degraded' | 'derms_control_stopped'
+  >[]).forEach((name) => labeledGauges[name].clear());
+
+  (Object.keys(labeledCounters) as CounterMetricName[]).forEach((name) =>
+    labeledCounters[name].clear(),
+  );
+
+  (Object.keys(histograms) as HistogramMetricName[]).forEach((name) => {
+    const hist = histograms[name];
+    hist.count = 0;
+    hist.sum = 0;
+    hist.counts = hist.counts.map(() => 0);
   });
 }

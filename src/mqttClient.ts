@@ -3,10 +3,8 @@ import config from './config';
 import { upsertDevice } from './repositories/devicesRepo';
 import { insertTelemetry } from './repositories/telemetryRepo';
 import { recordHeartbeat } from './state/controlLoopMonitor';
-import {
-  TelemetryValidationError,
-  validateTelemetryPayload,
-} from './validation/telemetry';
+import { TelemetryHandler } from './messaging/telemetryHandler';
+import { ContractValidationError } from './contracts';
 import logger from './logger';
 import { incrementCounter } from './observability/metrics';
 
@@ -14,41 +12,55 @@ export let mqttClient: any = null;
 let lastError: string | null = null;
 const baseTopic = config.mqtt.topicPrefix.replace(/\/+$/, '');
 
+const telemetryHandler = new TelemetryHandler({
+  save: (row) =>
+    insertTelemetry({
+      message_id: row.message_id,
+      message_version: row.message_version,
+      message_type: row.message_type,
+      sent_at: row.sent_at,
+      source: row.source,
+      device_id: row.device_id,
+      ts: row.ts,
+      type: row.type,
+      p_actual_kw: row.p_actual_kw,
+      p_setpoint_kw: row.p_setpoint_kw,
+      soc: row.soc,
+      site_id: row.site_id,
+      feeder_id: row.feeder_id,
+    }),
+});
+
 /**
  * Parse a telemetry message and write it into the DB.
  */
 async function parseAndStoreMessage(topic: string, payload: Buffer) {
   try {
     const raw = JSON.parse(payload.toString('utf-8')) as Record<string, unknown>;
-    const topicParts = topic.split('/');
-    const fallbackDeviceId = topicParts[topicParts.length - 1];
-    const telemetry = validateTelemetryPayload(raw, fallbackDeviceId);
+    const result = await telemetryHandler.handle(raw);
 
-    //Upsert device metadata (best-effort)
+    if (!result.parsed) return;
+    const telemetry = result.parsed;
+
     await upsertDevice({
       id: telemetry.deviceId,
-      type: telemetry.type,
-      siteId: telemetry.siteId,
-      feederId: telemetry.feederId ?? telemetry.siteId ?? config.defaultFeederId,
-      pMaxKw: telemetry.pMaxKw,
-      priority: telemetry.priority,
+      type: telemetry.deviceType,
+      siteId: telemetry.payload.siteId ?? telemetry.payload.feederId ?? config.defaultFeederId,
+      feederId: telemetry.payload.feederId ?? telemetry.payload.siteId ?? config.defaultFeederId,
+      pMaxKw:
+        telemetry.payload.capabilities?.maxDischargeKw ??
+        telemetry.payload.capabilities?.maxChargeKw ??
+        telemetry.payload.capabilities?.maxExportKw ??
+        telemetry.payload.capabilities?.maxImportKw ??
+        config.feederDefaultLimitKw,
+      priority: null,
     });
 
-    recordHeartbeat(telemetry.deviceId, telemetry.ts.getTime());
-
-    //Insert telemetry row (after the device row exists)
-    await insertTelemetry({
-      device_id: telemetry.deviceId,
-      ts: telemetry.ts,
-      type: telemetry.type,
-      p_actual_kw: telemetry.pActualKw,
-      p_setpoint_kw: telemetry.pSetpointKw,
-      soc: telemetry.soc,
-      site_id: telemetry.siteId,
-      feeder_id: telemetry.feederId ?? telemetry.siteId ?? config.defaultFeederId,
-    });
+    if (result.newest) {
+      recordHeartbeat(telemetry.deviceId, telemetry.timestampMs);
+    }
   } catch (err) {
-    if (err instanceof TelemetryValidationError) {
+    if (err instanceof ContractValidationError) {
       logger.warn('[mqttClient] invalid telemetry payload', { err });
       return;
     }

@@ -1,0 +1,56 @@
+import { randomUUID } from 'crypto';
+import {
+  ContractValidationError,
+  SetpointMessageV1,
+  contractVersion,
+  validateSetpointMessage,
+} from '../contracts';
+import { incrementCounter } from '../observability/metrics';
+
+export interface SetpointBuildInput {
+  deviceId: string;
+  deviceType: 'pv' | 'battery' | 'ev';
+  targetPowerKw: number;
+  mode: SetpointMessageV1['payload']['command']['mode'];
+  validUntilMs: number;
+  correlationId?: string;
+  allocator?: string;
+  notes?: string;
+}
+
+export function buildSetpointMessage(input: SetpointBuildInput): SetpointMessageV1 {
+  const message: SetpointMessageV1 = {
+    v: contractVersion,
+    messageType: 'setpoint',
+    messageId: randomUUID(),
+    deviceId: input.deviceId,
+    deviceType: input.deviceType,
+    timestampMs: Date.now(),
+    sentAtMs: Date.now(),
+    correlationId: input.correlationId,
+    source: 'backend',
+    payload: {
+      command: {
+        targetPowerKw: input.targetPowerKw,
+        mode: input.mode,
+        validUntilMs: input.validUntilMs,
+      },
+      constraints: {},
+      reason: {
+        allocator: input.allocator ?? 'feeder-controller',
+        notes: input.notes,
+      },
+    },
+  };
+
+  const validation = validateSetpointMessage(message, true);
+  if (!validation) {
+    incrementCounter('derms_contract_validation_fail_total', {
+      messageType: 'setpoint',
+      reason: 'setpoint-build-invalid',
+    });
+    throw new ContractValidationError('Generated setpoint failed validation');
+  }
+  return message;
+}
+

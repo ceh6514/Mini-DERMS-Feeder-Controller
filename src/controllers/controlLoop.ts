@@ -7,6 +7,7 @@ import {
 import { getAllDevices, Device, isPhysicalDeviceId, getFeederIds } from '../repositories/devicesRepo';
 import { mqttClient } from '../mqttClient';
 import { DrProgramRow, getActiveDrProgram } from '../repositories/drProgramsRepo';
+import { buildSetpointMessage } from '../messaging/setpointBuilder';
 import {
   getOfflineDeviceIds,
   markIterationError,
@@ -324,7 +325,7 @@ export function applyDrPolicy(
 }
 
 async function publishCommands(
-  commands: { deviceId: string; newSetpoint: number; prevSetpoint: number }[],
+  commands: { deviceId: string; deviceType: string; newSetpoint: number; prevSetpoint: number }[],
   logContext: string,
   nowMs: number,
 
@@ -344,8 +345,18 @@ async function publishCommands(
 
   for (const cmd of commands) {
     try {
-      const topic = `${prefix}/control/${cmd.deviceId}`;
-      const payload = JSON.stringify({ p_setpoint_kw: cmd.newSetpoint });
+      const topic = `${prefix}/setpoints/${cmd.deviceType}/${cmd.deviceId}`;
+      const validUntilMs = nowMs + getSafetyPolicy().holdLastMaxMs;
+      const payload = JSON.stringify(
+        buildSetpointMessage({
+          deviceId: cmd.deviceId,
+          deviceType: cmd.deviceType as 'pv' | 'battery' | 'ev',
+          targetPowerKw: cmd.newSetpoint,
+          mode: cmd.newSetpoint >= 0 ? 'charge' : 'discharge',
+          validUntilMs,
+          allocator: 'feeder-controller',
+        }),
+      );
       const start = Date.now();
       const policy = getSafetyPolicy();
       let attempts = 0;
@@ -355,15 +366,10 @@ async function publishCommands(
         attempts += 1;
         try {
           const publishPromise = new Promise<void>((resolve, reject) => {
-            mqttClient.publish(
-              topic,
-              payload,
-              { qos: 0 },
-              (err: Error | null | undefined) => {
-                if (err) reject(err);
-                else resolve();
-              },
-            );
+            mqttClient.publish(topic, payload, { qos: 1, retain: true }, (err: Error | null | undefined) => {
+              if (err) reject(err);
+              else resolve();
+            });
           });
           const timeout = new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error('mqtt_publish_timeout')), policy.mqttPublishTimeoutMs),
@@ -486,7 +492,12 @@ async function runFeederTick(
   }
 
   const policy = getSafetyPolicy();
-  const fallbackCommands: { deviceId: string; newSetpoint: number; prevSetpoint: number }[] = [];
+  const fallbackCommands: {
+    deviceId: string;
+    deviceType: string;
+    newSetpoint: number;
+    prevSetpoint: number;
+  }[] = [];
   const excludedIds = new Set<string>();
 
   const handleMissing = (
@@ -513,7 +524,12 @@ async function runFeederTick(
       excludedIds.add(deviceId);
       target = 0;
     }
-    fallbackCommands.push({ deviceId, newSetpoint: target, prevSetpoint: last });
+    fallbackCommands.push({
+      deviceId,
+      deviceType,
+      newSetpoint: target,
+      prevSetpoint: last,
+    });
   };
 
   for (const row of stale) {
@@ -626,7 +642,12 @@ async function runFeederTick(
     return { commandsPublished: 0, staleTelemetryDropped: stale.length };
   }
 
-  const commands: { deviceId: string; newSetpoint: number; prevSetpoint: number }[] = [];
+  const commands: {
+    deviceId: string;
+    deviceType: string;
+    newSetpoint: number;
+    prevSetpoint: number;
+  }[] = [];
   const deviceLogs: {
     id: string;
     priority: number;
@@ -672,7 +693,12 @@ async function runFeederTick(
     });
 
     if (Math.abs(newSetpoint - previous) > epsilon) {
-      commands.push({ deviceId: ev.id, newSetpoint, prevSetpoint: previous });
+      commands.push({
+        deviceId: ev.id,
+        deviceType: ev.type,
+        newSetpoint,
+        prevSetpoint: previous,
+      });
     }
   }
 

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
+import uuid
 
 import paho.mqtt.client as mqtt
 
@@ -40,6 +41,7 @@ class AgentConfig:
     site_id: str
     p_max_kw: float
     publish_interval_seconds: int
+    topic_prefix: str = "der"
 
     @classmethod
     def load(cls, path: Path) -> "AgentConfig":
@@ -58,6 +60,7 @@ class AgentConfig:
             "site_id": str,
             "p_max_kw": (int, float),
             "publish_interval_seconds": int,
+            "topic_prefix": str,
         }
         missing = [key for key in required if key not in data]
         if missing:
@@ -75,20 +78,39 @@ class DERState:
     p_actual_kw: float = 0.0
     p_setpoint_kw: Optional[float] = None
     soc: Optional[float] = field(default=50.0)
+    processed_setpoints: set[str] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         if self.config.device_type == "pv":
             self.soc = None  # PV does not track SOC
 
     def update_from_control(self, payload: Dict[str, Any]) -> None:
-        new_setpoint = payload.get("p_setpoint_kw")
+        if payload.get("messageType") != "setpoint" or payload.get("v") != 1:
+            logging.warning("Ignoring non-setpoint payload: %s", payload)
+            return
+
+        message_id = payload.get("messageId")
+        if isinstance(message_id, str) and message_id in self.processed_setpoints:
+            logging.info("Duplicate setpoint ignored: %s", message_id)
+            return
+
+        command = (payload.get("payload") or {}).get("command", {})
+        valid_until = command.get("validUntilMs")
+        now_ms = int(time.time() * 1000)
+        if isinstance(valid_until, (int, float)) and valid_until < now_ms:
+            logging.warning("Expired setpoint ignored; valid_until=%s", valid_until)
+            return
+
+        new_setpoint = command.get("targetPowerKw")
         if new_setpoint is None:
-            logging.warning("Control payload missing p_setpoint_kw; ignoring")
+            logging.warning("Control payload missing targetPowerKw; ignoring")
             return
         if not isinstance(new_setpoint, (int, float)):
-            logging.warning("Invalid p_setpoint_kw type; ignoring control message")
+            logging.warning("Invalid targetPowerKw type; ignoring control message")
             return
         self.p_setpoint_kw = float(new_setpoint)
+        if isinstance(message_id, str):
+            self.processed_setpoints.add(message_id)
         logging.info("Setpoint updated to %.2f kW", self.p_setpoint_kw)
 
     def compute_pv_power(self) -> float:
@@ -119,28 +141,45 @@ class DERState:
             self.soc = max(0.0, min(100.0, self.soc + delta_soc))
 
     def telemetry(self) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
-            "deviceId": self.config.device_id,
-            "type": self.config.device_type,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "p_actual_kw": round(self.p_actual_kw, 3),
-            "p_setpoint_kw": None if self.p_setpoint_kw is None else round(self.p_setpoint_kw, 3),
-            "site_id": self.config.site_id,
-            "p_max_kw": self.config.p_max_kw,
+        readings: Dict[str, Any] = {
+            "powerKw": round(self.p_actual_kw, 3),
         }
         if self.soc is not None:
-            payload["soc"] = round(self.soc, 2)
-        return payload
+            readings["soc"] = round(self.soc, 2)
+
+        return {
+            "v": 1,
+            "messageType": "telemetry",
+            "messageId": str(uuid.uuid4()),
+            "deviceId": self.config.device_id,
+            "deviceType": self.config.device_type,
+            "timestampMs": int(time.time() * 1000),
+            "sentAtMs": int(time.time() * 1000),
+            "source": "pi-agent",
+            "payload": {
+                "readings": readings,
+                "status": {"online": True},
+                "capabilities": {
+                    "maxChargeKw": self.config.p_max_kw,
+                    "maxDischargeKw": self.config.p_max_kw,
+                    "maxExportKw": self.config.p_max_kw,
+                    "maxImportKw": self.config.p_max_kw,
+                },
+                "siteId": self.config.site_id,
+                "feederId": self.config.site_id,
+            },
+        }
 
 
 def create_mqtt_client(config: AgentConfig, state: DERState) -> mqtt.Client:
     client = mqtt.Client(client_id=config.device_id, clean_session=True)
+    topic_prefix = config.topic_prefix.rstrip("/")
 
     def on_connect(client: mqtt.Client, userdata: Any, flags: Dict[str, Any], rc: int, properties: Any | None = None) -> None:
         if rc == 0:
             logging.info("Connected to MQTT broker")
-            control_topic = f"der/control/{config.device_id}"
-            client.subscribe(control_topic)
+            control_topic = f"{topic_prefix}/setpoints/{config.device_type}/{config.device_id}"
+            client.subscribe(control_topic, qos=1)
             logging.info("Subscribed to %s", control_topic)
         else:
             logging.error("MQTT connection failed with code %s", rc)
@@ -196,6 +235,7 @@ def run_agent(config_path: Path) -> None:
     signal.signal(signal.SIGTERM, handle_signal)
 
     publish_topic = f"der/telemetry/{config.device_id}"
+    publish_topic = f"{topic_prefix}/telemetry/{config.device_type}/{config.device_id}"
     interval = max(1, int(config.publish_interval_seconds))
     last_time = time.time()
 
@@ -206,7 +246,7 @@ def run_agent(config_path: Path) -> None:
         state.step(dt)
         payload = state.telemetry()
         try:
-            client.publish(publish_topic, json.dumps(payload), qos=0, retain=False)
+            client.publish(publish_topic, json.dumps(payload), qos=1, retain=False)
             logging.info("Published telemetry to %s: %s", publish_topic, payload)
         except Exception as exc:  # noqa: BLE001
             logging.error("Failed to publish telemetry: %s", exc)

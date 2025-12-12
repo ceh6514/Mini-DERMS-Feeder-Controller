@@ -3,6 +3,7 @@ import math
 import os
 import random
 import time
+import uuid
 from datetime import datetime, timedelta
 
 import paho.mqtt.client as mqtt
@@ -12,6 +13,7 @@ import paho.mqtt.client as mqtt
 # (BROKER_HOST=mosquitto) or a locally installed broker.
 BROKER_HOST = os.getenv("BROKER_HOST", "localhost")
 BROKER_PORT = int(os.getenv("BROKER_PORT", "1883"))
+TOPIC_PREFIX = os.getenv("TOPIC_PREFIX", "der").rstrip("/")
 DT_SECONDS = 5.0
 
 SUNRISE_HOUR = 6
@@ -55,29 +57,46 @@ for device in DEVICES:
 SETPOINTS: dict[str, float] = {}
 LAST_P_ACTUAL: dict[str, float] = {}
 SIM_PROFILE_OVERRIDE: str | None = None
+PROCESSED_SETPOINTS: set[str] = set()
 
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     print("[sim] connected to MQTT with result code", reason_code)
-    # subscribe for control messages (not strictly required yet)
-    client.subscribe("der/control/#")
-    client.subscribe("der/simulation/profile")
+    client.subscribe(f"{TOPIC_PREFIX}/setpoints/#", qos=1)
+    client.subscribe(f"{TOPIC_PREFIX}/simulation/profile")
 
 
 def on_message(client, userdata, msg):
     topic = msg.topic
     payload = msg.payload.decode()
-    if topic.startswith("der/control/"):
-        device_id = topic.split("/")[2]
+    if topic.startswith(f"{TOPIC_PREFIX}/setpoints/"):
+        parts = topic.split("/")
+        device_id = parts[-1]
         try:
             data = json.loads(payload)
-            setpoint = data.get("p_setpoint_kw")
+            if data.get("messageType") != "setpoint" or data.get("v") != 1:
+                return
+            message_id = data.get("messageId")
+            if isinstance(message_id, str) and message_id in PROCESSED_SETPOINTS:
+                print(f"[sim] duplicate setpoint ignored for {device_id}")
+                return
+
+            command = (data.get("payload") or {}).get("command", {})
+            valid_until = command.get("validUntilMs")
+            now_ms = int(time.time() * 1000)
+            if isinstance(valid_until, (int, float)) and valid_until < now_ms:
+                print(f"[sim] expired setpoint ignored for {device_id}")
+                return
+
+            setpoint = command.get("targetPowerKw")
             if isinstance(setpoint, (int, float)):
                 SETPOINTS[device_id] = float(setpoint)
-                print(f"[sim] control msg {device_id} setpoint -> {SETPOINTS[device_id]:.2f} kW")
+                if isinstance(message_id, str):
+                    PROCESSED_SETPOINTS.add(message_id)
+                print(f"[sim] setpoint {device_id} -> {SETPOINTS[device_id]:.2f} kW")
         except json.JSONDecodeError:
             print("[sim] failed to parse control payload", payload)
-    elif topic == "der/simulation/profile":
+    elif topic == f"{TOPIC_PREFIX}/simulation/profile":
         try:
             data = json.loads(payload)
             profile = data.get("profile")
@@ -243,28 +262,35 @@ def main():
                     p_actual = 0.0
                     soc = None
 
-                payload = {
+                readings = {"powerKw": p_actual}
+                if soc is not None:
+                    readings["soc"] = soc
+
+                envelope = {
+                    "v": 1,
+                    "messageType": "telemetry",
+                    "messageId": str(uuid.uuid4()),
                     "deviceId": device_id,
-                    "type": dtype,
-                    "timestamp": sim_time.isoformat(),
-                    "p_actual_kw": p_actual,
-                    "p_setpoint_kw": SETPOINTS.get(device_id),
-                    "soc": soc,
-                    "site_id": site_id,
-                    "p_max_kw": p_max,
-                    "priority": d.get("priority"),
-                    "sim_ts": sim_time.isoformat(),
-                    "battery_kwh": (
-                        BATTERY_KWH
-                        if dtype == "battery"
-                        else EV_CAPACITIES.get(device_id)
-                        if dtype == "ev"
-                        else None
-                    ),
+                    "deviceType": dtype,
+                    "timestampMs": int(sim_time.timestamp() * 1000),
+                    "sentAtMs": int(time.time() * 1000),
+                    "source": "simulator",
+                    "payload": {
+                        "readings": readings,
+                        "status": {"online": True},
+                        "capabilities": {
+                            "maxChargeKw": p_max,
+                            "maxDischargeKw": p_max,
+                            "maxExportKw": p_max,
+                            "maxImportKw": p_max,
+                        },
+                        "siteId": site_id,
+                        "feederId": site_id,
+                    },
                 }
 
-                topic = f"der/telemetry/{device_id}"
-                client.publish(topic, json.dumps(payload))
+                topic = f"{TOPIC_PREFIX}/telemetry/{dtype}/{device_id}"
+                client.publish(topic, json.dumps(envelope), qos=1, retain=False)
 
             if tick == 1 or tick % 12 == 0:
                 print(
