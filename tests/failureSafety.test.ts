@@ -68,7 +68,7 @@ describe('safety and failure handling', () => {
     } as any;
 
     const published = await publishCommandsForTest(
-      [{ deviceId: 'ev-1', newSetpoint: 0, prevSetpoint: 1 }],
+      [{ deviceId: 'ev-1', deviceType: 'ev', newSetpoint: 0, prevSetpoint: 1 }],
       'test',
       Date.now(),
     );

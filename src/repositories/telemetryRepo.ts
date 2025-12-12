@@ -5,6 +5,11 @@ import config from '../config';
 
 export interface TelemetryRow {
   id?: number;
+  message_id?: string;
+  message_version?: number;
+  message_type?: string;
+  sent_at?: Date | null;
+  source?: string | null;
   device_id: string;
   ts: Date;
   type: string;
@@ -93,10 +98,15 @@ export interface LiveDeviceRow {
   soc: number | null;
 }
 
-export async function insertTelemetry(row: TelemetryRow): Promise<void> {
+export async function insertTelemetry(row: TelemetryRow): Promise<'inserted' | 'duplicate'> {
   const feederId = normalizeFeederId(row.feeder_id);
   const text = `
     INSERT INTO telemetry (
+      message_id,
+      message_version,
+      message_type,
+      sent_at,
+      source,
       device_id,
       ts,
       type,
@@ -109,9 +119,14 @@ export async function insertTelemetry(row: TelemetryRow): Promise<void> {
       shortwave_radiation_wm2,
       estimated_power_w
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-    ON CONFLICT (device_id, ts) DO UPDATE
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+    ON CONFLICT (message_id) DO NOTHING
+    ON CONFLICT ON CONSTRAINT telemetry_device_ts_type_key DO UPDATE
     SET
+      message_version = EXCLUDED.message_version,
+      message_type = EXCLUDED.message_type,
+      sent_at = EXCLUDED.sent_at,
+      source = EXCLUDED.source,
       type = EXCLUDED.type,
       p_actual_kw = EXCLUDED.p_actual_kw,
       p_setpoint_kw = EXCLUDED.p_setpoint_kw,
@@ -122,19 +137,32 @@ export async function insertTelemetry(row: TelemetryRow): Promise<void> {
       shortwave_radiation_wm2 = EXCLUDED.shortwave_radiation_wm2,
       estimated_power_w = EXCLUDED.estimated_power_w;
   `;
-  await query(text, [
-    row.device_id,
-    row.ts,
-    row.type,
-    row.p_actual_kw,
-    row.p_setpoint_kw ?? null,
-    row.soc ?? null,
-    row.site_id,
-    feederId,
-    row.cloud_cover_pct ?? 0,
-    row.shortwave_radiation_wm2 ?? 0,
-    row.estimated_power_w ?? 0,
-  ]);
+  try {
+    await query(text, [
+      row.message_id ?? null,
+      row.message_version ?? 1,
+      row.message_type ?? 'telemetry',
+      row.sent_at ?? null,
+      row.source ?? null,
+      row.device_id,
+      row.ts,
+      row.type,
+      row.p_actual_kw,
+      row.p_setpoint_kw ?? null,
+      row.soc ?? null,
+      row.site_id,
+      feederId,
+      row.cloud_cover_pct ?? 0,
+      row.shortwave_radiation_wm2 ?? 0,
+      row.estimated_power_w ?? 0,
+    ]);
+    return 'inserted';
+  } catch (err: any) {
+    if (err?.code === '23505') {
+      return 'duplicate';
+    }
+    throw err;
+  }
 }
 
 export async function getLatestTelemetryPerDevice(feederId?: string): Promise<TelemetryRow[]> {

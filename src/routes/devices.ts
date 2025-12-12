@@ -8,14 +8,32 @@ import {
   insertTelemetry,
 } from '../repositories/telemetryRepo';
 import { recordHeartbeat } from '../state/controlLoopMonitor';
-import {
-  TelemetryValidationError,
-  validateTelemetryPayload,
-} from '../validation/telemetry';
+import { ContractValidationError } from '../contracts';
+import { TelemetryHandler } from '../messaging/telemetryHandler';
 import { requireRole } from '../auth';
+import config from '../config';
 
 
 const router = Router();
+
+const telemetryHandler = new TelemetryHandler({
+  save: (row) =>
+    insertTelemetry({
+      message_id: row.message_id,
+      message_version: row.message_version,
+      message_type: row.message_type,
+      sent_at: row.sent_at,
+      source: row.source,
+      device_id: row.device_id,
+      ts: row.ts,
+      type: row.type,
+      p_actual_kw: row.p_actual_kw,
+      p_setpoint_kw: row.p_setpoint_kw,
+      soc: row.soc,
+      site_id: row.site_id,
+      feeder_id: row.feeder_id,
+    }),
+});
 
 router.get('/devices', async (req, res) => {
   const feederId = typeof req.query.feederId === 'string' ? req.query.feederId : undefined;
@@ -78,38 +96,39 @@ router.get('/solar-feeders/:feederId/latest-weather', async (req, res) => {
 
 router.post('/telemetry', requireRole('operator'), async (req, res) => {
   try {
-    const telemetry = validateTelemetryPayload(req.body ?? {});
+    const result = await telemetryHandler.handle(req.body ?? {});
+    const telemetry = result.parsed;
+    if (!telemetry) {
+      res.status(400).json({ error: 'Failed to parse telemetry' });
+      return;
+    }
+
     const device = await getDeviceById(telemetry.deviceId);
-    const type = device?.type ?? telemetry.type;
-    const siteId = device?.siteId ?? telemetry.siteId;
-    const feederId = telemetry.feederId ?? device?.feederId ?? null;
+    const siteId = telemetry.payload.siteId ?? device?.siteId ?? config.defaultFeederId;
+    const feederId = telemetry.payload.feederId ?? device?.feederId ?? siteId;
 
     await upsertDevice({
       id: telemetry.deviceId,
-      type,
+      type: telemetry.deviceType,
       siteId,
-      feederId: feederId ?? siteId,
-      pMaxKw: telemetry.pMaxKw,
-      priority: telemetry.priority,
+      feederId,
+      pMaxKw:
+        telemetry.payload.capabilities?.maxDischargeKw ??
+        telemetry.payload.capabilities?.maxChargeKw ??
+        telemetry.payload.capabilities?.maxExportKw ??
+        telemetry.payload.capabilities?.maxImportKw ??
+        config.feederDefaultLimitKw,
+      priority: null,
       isPhysical: isPhysicalDeviceId(telemetry.deviceId),
     });
 
-    recordHeartbeat(telemetry.deviceId, telemetry.ts.getTime());
-
-    await insertTelemetry({
-      device_id: telemetry.deviceId,
-      ts: telemetry.ts,
-      type,
-      p_actual_kw: telemetry.pActualKw,
-      p_setpoint_kw: telemetry.pSetpointKw,
-      soc: telemetry.soc,
-      site_id: siteId,
-      feeder_id: feederId ?? siteId,
-    });
+    if (result.newest) {
+      recordHeartbeat(telemetry.deviceId, telemetry.timestampMs);
+    }
 
     res.status(201).json({ status: 'ok' });
   } catch (err) {
-    if (err instanceof TelemetryValidationError) {
+    if (err instanceof ContractValidationError) {
       res.status(400).json({ error: err.message });
       return;
     }
