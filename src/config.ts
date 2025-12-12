@@ -57,32 +57,84 @@ export interface Config {
   };
 }
 
+const weakPasswords = new Set([
+  'admin123',
+  'administrator',
+  'changeme',
+  'change-me',
+  'default',
+  'operator123',
+  'password',
+  'postgres',
+  'viewer123',
+]);
+
+const passwordComplexity = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^\w\s]).{12,}$/;
+
+function validateSecret(name: string, value: string | undefined, minLength = 24): string {
+  if (!value) {
+    throw new Error(`[config] ${name} must be injected via environment variable or secret store`);
+  }
+
+  if (value.length < minLength) {
+    throw new Error(`[config] ${name} must be at least ${minLength} characters long`);
+  }
+
+  if (weakPasswords.has(value.toLowerCase())) {
+    throw new Error(`[config] ${name} cannot use common or default credentials`);
+  }
+
+  return value;
+}
+
 function parseUsers(): Config['auth']['users'] {
   const raw = process.env.AUTH_USERS;
   if (!raw) {
-    return [
-      { username: 'admin', password: 'admin123', role: 'admin' },
-      { username: 'operator', password: 'operator123', role: 'operator' },
-      { username: 'viewer', password: 'viewer123', role: 'viewer' },
-    ];
+    throw new Error(
+      '[config] AUTH_USERS is required. Inject a JSON array of users via environment variable or secret manager.',
+    );
   }
 
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed.filter(
-        (u) => u?.username && u?.password && ['viewer', 'operator', 'admin'].includes(u.role),
-      ) as Config['auth']['users'];
-    }
+    parsed = JSON.parse(raw);
   } catch (err) {
-    console.warn('[config] Failed to parse AUTH_USERS, falling back to defaults', err);
+    throw new Error(`[config] AUTH_USERS must be valid JSON: ${(err as Error).message}`);
   }
 
-  return [
-    { username: 'admin', password: 'admin123', role: 'admin' },
-    { username: 'operator', password: 'operator123', role: 'operator' },
-    { username: 'viewer', password: 'viewer123', role: 'viewer' },
-  ];
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error('[config] AUTH_USERS must be a non-empty JSON array');
+  }
+
+  return parsed.map((u, idx) => {
+    if (!u || typeof u !== 'object') {
+      throw new Error(`[config] AUTH_USERS[${idx}] must be an object with username/password/role`);
+    }
+
+    const username = (u as { username?: string }).username;
+    const password = (u as { password?: string }).password;
+    const role = (u as { role?: string }).role;
+
+    if (!username || !password || !role) {
+      throw new Error(`[config] AUTH_USERS[${idx}] must include username, password, and role`);
+    }
+
+    if (!['viewer', 'operator', 'admin'].includes(role)) {
+      throw new Error(`[config] AUTH_USERS[${idx}].role must be viewer, operator, or admin`);
+    }
+
+    if (!passwordComplexity.test(password) || weakPasswords.has(password.toLowerCase())) {
+      throw new Error(
+        `[config] AUTH_USERS[${idx}] password must be 12+ characters with upper/lowercase, number, and symbol, and cannot be common defaults`,
+      );
+    }
+
+    return {
+      username,
+      password,
+      role: role as Config['auth']['users'][number]['role'],
+    };
+  });
 }
 
 const config: Config = {
@@ -133,7 +185,7 @@ const config: Config = {
   },
   trackingErrorWindowMinutes: Number(process.env.TRACKING_ERROR_WINDOW_MINUTES ?? 10),
   auth: {
-    jwtSecret: process.env.JWT_SECRET ?? 'dev-secret-change-me',
+    jwtSecret: validateSecret('JWT_SECRET', process.env.JWT_SECRET),
     tokenTtlHours: Number(process.env.JWT_TOKEN_TTL_HOURS ?? 12),
     users: parseUsers(),
   },
