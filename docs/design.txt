@@ -157,9 +157,12 @@ TRACKING_ERROR_WINDOW_MINUTES controls rolling tracking-error calculations.
 
 Authentication:
 
-JWT_SECRET, JWT_TOKEN_TTL_HOURS, and AUTH_USERS (JSON array of username/password/role) define the login guard.
+JWT_SECRET, JWT_TOKEN_TTL_HOURS, and AUTH_USERS (JSON array of username/password/role) define the login guard. JWT_SECRET and
+AUTH_USERS must be injected via environment variables or a secret manager; the backend refuses to start if they are missing,
+weak, or improperly formatted. Passwords are validated for complexity (12+ chars, mixed case, number, symbol) to reduce weak
+defaults.
 
-Exposes a config object used everywhere else; the app can run with just .env as documented in the README.
+Exposes a config object used everywhere else; secrets are sourced externally per the README to avoid embedded credentials.
 
 3.3 Persistence Layer (src/db.ts)
 

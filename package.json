@@ -6,7 +6,8 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "TS_NODE_TRANSPILE_ONLY=1 node --require ts-node/register --test tests/**/*.test.ts",
+    "test": "AUTH_USERS='[{\"username\":\"admin\",\"password\":\"Adm1n!2345678\",\"role\":\"admin\"},{\"username\":\"operator\",\"password\":\"Op3rator!23456\",\"role\":\"operator\"},{\"username\":\"viewer\",\"password\":\"View3r!23456\",\"role\":\"viewer\"}]' JWT_SECRET='test-suite-secret-rotate-me-please-123' npm run build && AUTH_USERS='[{\"username\":\"admin\",\"password\":\"Adm1n!2345678\",\"role\":\"admin\"},{\"username\":\"operator\",\"password\":\"Op3rator!23456\",\"role\":\"operator\"},{\"username\":\"viewer\",\"password\":\"View3r!23456\",\"role\":\"viewer\"}]' JWT_SECRET='test-suite-secret-rotate-me-please-123' node --test dist/tests/**/*.test.js",
+    "lint:env": "node scripts/lintEnvExample.js",
     "dev:stack": "docker compose up --build",
     "stop:stack": "docker compose down"
   },

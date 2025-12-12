@@ -49,6 +49,15 @@ function buildExpiredToken(username = 'viewer') {
   return `${signingInput}.${signature}`;
 }
 
+function getOperatorCreds() {
+  const operatorUser = config.auth.users.find((u) => u.role === 'operator') ?? config.auth.users[0];
+  if (!operatorUser) {
+    throw new Error('No AUTH_USERS configured for tests');
+  }
+
+  return operatorUser;
+}
+
 async function startServer() {
   const app = createApp();
   const server = app.listen(0);
@@ -64,7 +73,11 @@ async function startServer() {
   return { baseUrl, close };
 }
 
-async function loginAndGetToken(baseUrl: string, username = 'operator', password = 'operator123') {
+async function loginAndGetToken(
+  baseUrl: string,
+  username = getOperatorCreds().username,
+  password = getOperatorCreds().password,
+) {
   const res = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -189,7 +202,8 @@ describe('API authentication and routing', () => {
 
     const { baseUrl, close } = await startServer();
     try {
-      const token = await loginAndGetToken(baseUrl, 'operator', 'operator123');
+      const { username, password } = getOperatorCreds();
+      const token = await loginAndGetToken(baseUrl, username, password);
       const resp = await fetch(`${baseUrl}/api/dr-programs`, {
         method: 'POST',
         headers: {

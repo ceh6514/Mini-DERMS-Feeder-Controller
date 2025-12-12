@@ -46,6 +46,12 @@
 - **Source of truth**: `.env`/Kubernetes Secrets should define JWT secret, DB password, MQTT credentials, and TLS key/cert paths. The example env file now favors non-default secrets for non-local use.
 - **Rotation**: Rotate JWT and DB passwords quarterly. Restart pods to pick up new secrets. Use different secrets between staging/prod.
 - **Mounting**: In Kubernetes manifests, secrets are mounted as files for TLS keys and injected as environment variables for app settings.
+- **Guardrails**: Run `npm run lint:env` to ensure `.env.example` never regresses to weak defaults before publishing or committing changes.
+
+## Dashboard/API security
+- **TLS termination**: Prefer terminating TLS at an ingress/load balancer with automatic certificate renewal. When terminating in the pod, set `TLS_ENABLED=true` and mount the key/cert secret paths referenced in `.env.example`.
+- **JWT secret rotation**: Create a new secret in your vault, update the deployment environment variables, and restart pods during a planned window; reject or reissue tokens signed with the old secret if centralized logout is required.
+- **Credential injection**: Provide `AUTH_USERS` via your secret manager rather than checked-in files; enforce 12+ character, mixed-complexity passwords and rotate user entries every 90 days.
 
 ## TLS and HTTPS
 - **App TLS**: Enable `TLS_ENABLED=true` with `TLS_KEY_PATH` and `TLS_CERT_PATH` pointing to mounted secrets. Use an Ingress with cert-manager for automated issuance/renewal.

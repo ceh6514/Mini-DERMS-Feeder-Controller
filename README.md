@@ -65,15 +65,13 @@ API routes (except `/api/health` and `/api/auth/login`) are protected by a light
 - **operator**: can issue controls such as DR events, simulation overrides, and telemetry ingest
 - **admin**: everything operators can do plus destructive operations (e.g., deleting DR programs)
 
-Configure credentials and secrets through environment variables (see `.env.example` for defaults):
+Secrets must be injected via environment variables or a secret manager (see `.env.example` for required keys). Provide a JSON array for `AUTH_USERS` (12+ character passwords with upper/lowercase, numbers, and symbols) and a 32+ character `JWT_SECRET`. Rotate both at least every 90 days. The frontend stores the JWT and attaches it to subsequent API calls after a successful login.
 
-```bash
-JWT_SECRET=change-me
-JWT_TOKEN_TTL_HOURS=12
-AUTH_USERS='[{"username":"admin","password":"admin123","role":"admin"},{"username":"operator","password":"operator123","role":"operator"},{"username":"viewer","password":"viewer123","role":"viewer"}]'
-```
-
-Use the configured username/password pairs to sign in via the dashboard login screen. The frontend automatically stores the JWT and attaches it to subsequent API calls. Update the `AUTH_USERS` array and `JWT_SECRET` before deploying anywhere non-local.
+#### Secure deployment checklist (dashboard/API)
+- Terminate TLS at your ingress or load balancer and mount certificates into the backend when enabling `TLS_ENABLED=true`.
+- Source `JWT_SECRET`, `AUTH_USERS`, and database credentials from your vault/secret store; never bake them into images.
+- Rotate JWT signing secrets on a 90-day cadence and redeploy to pick up the new key; invalidate old tokens during rotations as needed.
+- Run `npm run lint:env` before publishing changes to ensure `.env.example` does not contain weak placeholder credentials.
 
 ## 🐍 Run the Raspberry Pi DER agent
 To connect a physical Pi-based device, use the provided MQTT agent:
