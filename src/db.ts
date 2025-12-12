@@ -1,5 +1,7 @@
 import { Pool } from 'pg';
 import config from './config';
+import { getSafetyPolicy } from './safetyPolicy';
+import logger from './logger';
 
 export let pool = new Pool({
   host: config.db.host,
@@ -133,6 +135,19 @@ export async function query<T = unknown>(
   text: string,
   params?: any[],
 ): Promise<{ rows: T[] }> {
-  const result = await pool.query(text, params);
-  return { rows: result.rows as T[] };
+  const policy = getSafetyPolicy();
+  const timeout = new Promise<never>((_, reject) => {
+    const timer = setTimeout(() => {
+      clearTimeout(timer);
+      reject(new Error('DB query timed out'));
+    }, policy.dbQueryTimeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([pool.query(text, params), timeout]);
+    return { rows: (result as any).rows as T[] };
+  } catch (err) {
+    logger.error({ err }, '[db] query failed');
+    throw err;
+  }
 }

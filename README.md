@@ -59,6 +59,19 @@ The backend and frontend hot-reload when running locally or mounted into contain
 - To enable HTTPS for the API, set `TLS_ENABLED=true` and mount `TLS_KEY_PATH`/`TLS_CERT_PATH` in the container or Kubernetes pod. The included Kubernetes manifests wire TLS via Ingress and secret mounts.
 - Runbooks for backups, failover, alerting, and secret/TLS management live in [`docs/operations.md`](docs/operations.md).
 
+### Safety policy & failure handling
+The control loop now enforces a safety-first policy when telemetry, MQTT, or the database misbehave. Key environment variables (all have safe defaults):
+
+- `TELEMETRY_STALE_MS` (default `30000`): maximum telemetry age before being considered stale.
+- `TELEMETRY_MISSING_BEHAVIOR` (`SAFE_ZERO` | `HOLD_LAST` | `EXCLUDE_DEVICE`, default `SAFE_ZERO`): how to treat stale/missing telemetry.
+- `HOLD_LAST_MAX_MS` (default `120000`): maximum time to reuse the last setpoint when using `HOLD_LAST`.
+- `MQTT_PUBLISH_TIMEOUT_MS` (default `2000`), `MQTT_MAX_RETRIES` (default `3`), `MQTT_RETRY_BACKOFF_MS` (default `200`): time-bounded MQTT publishes with exponential backoff.
+- `DB_QUERY_TIMEOUT_MS` (default `2000`) and `DB_ERROR_BEHAVIOR` (`SAFE_ZERO_ALL` | `HOLD_LAST` | `STOP_LOOP`, default `SAFE_ZERO_ALL`): time-bound DB calls and what to do when they fail.
+- `MAX_CONSECUTIVE_FAILURES` (default `5`): after this many failed control cycles the loop enters stop-controlling mode and surfaces `derms_control_stopped` with the reason label.
+- `RESTART_BEHAVIOR` (`SAFE_ZERO` | `HOLD_LAST`, default `SAFE_ZERO`): what to publish on cold start before fresh telemetry arrives.
+
+Failure modes increment Prometheus metrics such as `derms_stale_telemetry_total`, `derms_missing_telemetry_total`, `derms_mqtt_publish_fail_total`, `derms_db_error_total`, `derms_control_degraded`, and `derms_control_stopped`, and log structured warnings with device IDs and reasons. When in doubt, devices are driven toward a conservative `0 kW` setpoint.
+
 ### Authentication and roles
 API routes (except `/api/health` and `/api/auth/login`) are protected by a lightweight JWT-based guard with three roles:
 

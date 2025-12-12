@@ -8,6 +8,7 @@ import {
   validateTelemetryPayload,
 } from './validation/telemetry';
 import logger from './logger';
+import { incrementCounter } from './observability/metrics';
 
 export let mqttClient: any = null;
 let lastError: string | null = null;
@@ -97,6 +98,7 @@ export async function startMqttClient(): Promise<void> {
   mqttClient.on('error', (err: Error) => {
     lastError = err.message;
     logger.error({ err }, '[mqttClient] connection error');
+    incrementCounter('derms_mqtt_disconnect_total');
   });
 
   mqttClient.on('reconnect', () => {
@@ -105,6 +107,7 @@ export async function startMqttClient(): Promise<void> {
 
   mqttClient.on('offline', () => {
     logger.warn('[mqttClient] broker offline or unreachable');
+    incrementCounter('derms_mqtt_disconnect_total');
   });
 
   //We don't await anything here; startup should not block on MQTT
