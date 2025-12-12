@@ -33,6 +33,9 @@ jobs:
       - name: Run backend tests
         run: npm test
 
+      - name: Run end-to-end control path tests
+        run: npm run test:e2e
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest

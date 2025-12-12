@@ -21,11 +21,19 @@ import { ControlParams, DeviceState } from '../types/control';
 import { optimizeAllocations } from './allocationOptimizer';
 import { clampSoc, computeSocAwareAllocations, isDispatchableDevice } from './scheduler';
 import { recordTrackingSample } from '../state/trackingError';
+import { recordStaleTelemetry } from '../state/telemetryQuality';
 
 // Track the most recent setpoint we have commanded for each device.
 export const deviceSetpoints = new Map<string, number>();
 // Track per-device deficit/credit used by the allocator to compensate under-served devices.
 export const deviceDeficits = new Map<string, number>();
+
+export interface ControlLoopIterationResult {
+  offlineDevices: string[];
+  commandsPublished: number;
+  staleTelemetryDropped: number;
+  timestampIso: string;
+}
 
 export type DeviceWithTelemetry = DeviceState & {
   telemetry: TelemetryRow;
@@ -308,289 +316,352 @@ export function applyDrPolicy(
 function publishCommands(
   commands: { deviceId: string; newSetpoint: number; prevSetpoint: number }[],
   logContext: string
-) {
-  if (commands.length === 0) return;
+
+): number {
+  if (commands.length === 0) return 0;
 
   if (!mqttClient || !mqttClient.connected) {
     console.warn(
       `[controlLoop] MQTT not connected, skipping publish this tick (${logContext})`
     );
-    return;
+    return 0;
   }
+
+  const prefix = config.mqtt.topicPrefix.replace(/\/+$/, '');
+  let published = 0;
 
   for (const cmd of commands) {
     try {
-      const topic = `der/control/${cmd.deviceId}`;
+      const topic = `${prefix}/control/${cmd.deviceId}`;
       const payload = JSON.stringify({ p_setpoint_kw: cmd.newSetpoint });
       mqttClient.publish(topic, payload);
       deviceSetpoints.set(cmd.deviceId, cmd.newSetpoint);
+      published += 1;
     } catch (err) {
       console.error('[controlLoop] failed to publish command', err);
     }
   }
+
+  return published;
 }
 
-export function startControlLoop() {
-  const intervalMs = config.controlIntervalSeconds * 1000;
-  const marginKw = 0.5;
-  const epsilon = 0.1;
-  const stepKw = 1.0;
+const marginKw = 0.5;
+const epsilon = 0.1;
+const stepKw = 1.0;
 
-  async function runFeederTick(
-    feederId: string,
-    now: Date,
-    offlineDevices: Set<string>,
-    devices: Device[],
-  ) {
-    const limitKw = await getCurrentFeederLimit(now, feederId);
-    const latest = await getLatestTelemetryPerDevice(feederId);
-    const feederDevices = devices.filter((device) => device.feederId === feederId);
-    const deviceLookup = buildDeviceLookup(feederDevices);
-    const priorityLookup = new Map(
-      feederDevices.map((device) => [device.id, device.priority ?? 1]),
-    );
+function partitionTelemetry(latest: TelemetryRow[], nowMs: number) {
+  const thresholdMs = config.staleTelemetryThresholdSeconds * 1000;
+  const fresh: TelemetryRow[] = [];
+  const stale: TelemetryRow[] = [];
 
-    if (offlineDevices.size > 0) {
-      const offlineForFeeder = [...offlineDevices].filter((id) => deviceLookup.has(id));
-      if (offlineForFeeder.length > 0) {
-        console.warn(
-          `[controlLoop:${feederId}] ${offlineForFeeder.length} device(s) offline, excluding from allocation`,
-        );
-      }
-    }
-
-    const onlineTelemetry = latest.filter((row) => !offlineDevices.has(row.device_id));
-
-    if (onlineTelemetry.length === 0) {
-      console.log(`[controlLoop:${feederId}] no telemetry yet, skipping tick`);
-      return;
-    }
-
-    const totalKw = onlineTelemetry.reduce((sum, row) => sum + (row.p_actual_kw || 0), 0);
-    const evDevices = prepareDispatchableDevices(onlineTelemetry, deviceLookup);
-    reconcileDeviceDeficits(evDevices);
-    const totalEvKw = evDevices.reduce((sum, ev) => sum + ev.pActualKw, 0);
-    const nonEvKw = totalKw - totalEvKw;
-    const feederLimitKw = Math.min(limitKw, config.controlParams.globalKwLimit);
-    const availableForEv = Math.max(feederLimitKw - nonEvKw, 0);
-    const activeProgram = await getActiveDrProgram(now);
-    const { adjustedAvailable, shedApplied, elasticity } = applyDrPolicy(
-      activeProgram,
-      availableForEv,
-      evDevices,
-    );
-    const effectiveAvailableForEv = adjustedAvailable;
-
-    if (evDevices.length === 0) {
-      console.log(`[controlLoop:${feederId}] no dispatchable devices found, skipping control`);
-      return;
-    }
-
-    for (const ev of evDevices) {
-      recordTrackingSample({
-        deviceId: ev.id,
-        type: ev.type,
-        siteId: ev.siteId,
-        feederId,
-        priority: ev.priority,
-        soc: ev.soc,
-        isPhysical: ev.isPhysical,
-        setpointKw: ev.currentSetpointKw,
-        actualKw: ev.pActualKw,
-      });
-    }
-
-    const overloaded = effectiveAvailableForEv < totalEvKw - marginKw;
-    const hasHeadroom = effectiveAvailableForEv > totalEvKw + marginKw;
-
-    const allowedShares = computeAllowedShares(
-      evDevices,
-      effectiveAvailableForEv,
-      config.controlParams,
-    );
-    const perDeviceImpact = evDevices.map((ev) => {
-      const allowed = allowedShares.get(ev.id) ?? ev.currentSetpointKw;
-      const utilization = ev.pMaxKw > 0 ? Math.min(Math.max(allowed / ev.pMaxKw, 0), 1) : 0;
-      const priority = priorityLookup.get(ev.id) ?? ev.priority ?? 1;
-      return {
-        deviceId: ev.id,
-        allowedKw: allowed,
-        pMax: ev.pMaxKw,
-        utilizationPct: utilization * 100,
-        priority,
-      };
-    });
-
-    const avgUtilizationPct =
-      perDeviceImpact.reduce((sum, d) => sum + d.utilizationPct, 0) /
-      (perDeviceImpact.length || 1);
-    const totalPriority = perDeviceImpact.reduce((sum, d) => sum + d.priority, 0) || 1;
-    const priorityWeightedUtilizationPct =
-      perDeviceImpact.reduce((sum, d) => sum + d.utilizationPct * d.priority, 0) /
-      totalPriority;
-
-    recordDrImpact({
-      timestampIso: now.toISOString(),
-      availableBeforeKw: availableForEv,
-      availableAfterKw: effectiveAvailableForEv,
-      shedAppliedKw: shedApplied,
-      elasticityFactor: elasticity,
-      totalEvKw,
-      nonEvKw,
-      avgUtilizationPct,
-      priorityWeightedUtilizationPct,
-      activeProgram,
-      perDevice: perDeviceImpact,
-      feederId,
-    });
-
-    if (!overloaded && !hasHeadroom) {
-      console.log(`[controlLoop:${feederId}] within margin, no changes`);
-      return;
-    }
-
-    const commands: { deviceId: string; newSetpoint: number; prevSetpoint: number }[] = [];
-    const deviceLogs: {
-      id: string;
-      priority: number;
-      deficit: number;
-      allowed: number;
-      prev: number;
-      next: number;
-      pMax: number;
-    }[] = [];
-
-    for (const ev of evDevices) {
-      const previous = deviceSetpoints.get(ev.id) ?? ev.currentSetpointKw;
-      let target = previous;
-
-      const allowedShare = allowedShares.get(ev.id) ?? 0;
-
-      if (overloaded) {
-        target = allowedShare;
-      } else if (hasHeadroom) {
-        target = Math.min(ev.pMaxKw, Math.max(previous + stepKw, allowedShare));
-      }
-
-      target = Math.min(Math.max(0, target), ev.pMaxKw);
-
-      const delta = target - previous;
-      let newSetpoint = previous;
-      if (Math.abs(delta) > stepKw) {
-        newSetpoint = previous + Math.sign(delta) * stepKw;
-      } else {
-        newSetpoint = target;
-      }
-
-      newSetpoint = Math.min(Math.max(0, newSetpoint), ev.pMaxKw);
-
-      deviceLogs.push({
-        id: ev.id,
-        priority: priorityLookup.get(ev.id) ?? ev.priority ?? 1,
-        deficit: deviceDeficits.get(ev.id) ?? 0,
-        allowed: allowedShare,
-        prev: previous,
-        next: newSetpoint,
-        pMax: ev.pMaxKw,
-      });
-
-      if (Math.abs(newSetpoint - previous) > epsilon) {
-        commands.push({ deviceId: ev.id, newSetpoint, prevSetpoint: previous });
-      }
-    }
-
-    if (commands.length > 0) {
-      const commandSummaries = commands.map((c) => ({
-        id: c.deviceId,
-        setpoint: c.newSetpoint.toFixed(2),
-        priority: priorityLookup.get(c.deviceId) ?? 1,
-      }));
-      const deficitSummaries = deviceLogs.map((log) => ({
-        id: log.id,
-        priority: log.priority,
-        deficit: log.deficit.toFixed(2),
-        allowed: log.allowed.toFixed(2),
-        prev: log.prev.toFixed(2),
-        next: log.next.toFixed(2),
-        pMax: log.pMax.toFixed(2),
-      }));
-      console.log(
-        `[controlLoop:${feederId}] total`,
-        totalKw.toFixed(2),
-        'limit',
-        limitKw.toFixed(2),
-        'nonEv',
-        nonEvKw.toFixed(2),
-        'availableEv',
-        availableForEv.toFixed(2),
-        'effectiveEv',
-        effectiveAvailableForEv.toFixed(2),
-        'dr',
-        activeProgram
-          ? {
-              mode: activeProgram.mode,
-              shed: shedApplied.toFixed(2),
-              elasticity: elasticity.toFixed(2),
-            }
-          : 'none',
-        'ev commands',
-        commandSummaries,
-        'ev deficits',
-        deficitSummaries,
-      );
-      publishCommands(
-        commands,
-        `feeder=${feederId} total=${totalKw.toFixed(2)} limit=${limitKw.toFixed(2)} availableForEv=${availableForEv.toFixed(2)} effective=${effectiveAvailableForEv.toFixed(2)}`,
-      );
+  for (const row of latest) {
+    const ts = row.ts instanceof Date ? row.ts : new Date(row.ts);
+    if (nowMs - ts.getTime() > thresholdMs) {
+      stale.push({ ...row, ts });
     } else {
-      const deficitSummaries = deviceLogs.map((log) => ({
-        id: log.id,
-        priority: log.priority,
-        deficit: log.deficit.toFixed(2),
-        allowed: log.allowed.toFixed(2),
-        prev: log.prev.toFixed(2),
-        next: log.next.toFixed(2),
-        pMax: log.pMax.toFixed(2),
-      }));
-      console.log(`[controlLoop:${feederId}] no setpoint changes beyond epsilon`, deficitSummaries);
+      fresh.push({ ...row, ts });
     }
   }
 
-  setInterval(async () => {
-    const now = new Date();
-    const nowMs = now.getTime();
-    const stalledState = shouldAlertStall(nowMs);
-    if (stalledState) {
-      notifyStalledLoop(stalledState);
+  return { fresh, stale };
+}
+
+async function runFeederTick(
+  feederId: string,
+  now: Date,
+  offlineDevices: Set<string>,
+  devices: Device[],
+): Promise<{ commandsPublished: number; staleTelemetryDropped: number }> {
+  const limitKw = await getCurrentFeederLimit(now, feederId);
+  const latest = await getLatestTelemetryPerDevice(feederId);
+  const { fresh, stale } = partitionTelemetry(latest, now.getTime());
+  const feederDevices = devices.filter((device) => device.feederId === feederId);
+  const deviceLookup = buildDeviceLookup(feederDevices);
+  const priorityLookup = new Map(
+    feederDevices.map((device) => [device.id, device.priority ?? 1]),
+  );
+
+  for (const row of stale) {
+    recordStaleTelemetry(row);
+  }
+
+  if (offlineDevices.size > 0) {
+    const offlineForFeeder = [...offlineDevices].filter((id) => deviceLookup.has(id));
+    if (offlineForFeeder.length > 0) {
+      console.warn(
+        `[controlLoop:${feederId}] ${offlineForFeeder.length} device(s) offline, excluding from allocation`,
+      );
+    }
+  }
+
+  const onlineTelemetry = fresh.filter((row) => !offlineDevices.has(row.device_id));
+
+  if (onlineTelemetry.length === 0) {
+    console.log(`[controlLoop:${feederId}] no telemetry yet, skipping tick`);
+    return { commandsPublished: 0, staleTelemetryDropped: stale.length };
+  }
+
+  const totalKw = onlineTelemetry.reduce((sum, row) => sum + (row.p_actual_kw || 0), 0);
+  const evDevices = prepareDispatchableDevices(onlineTelemetry, deviceLookup);
+  reconcileDeviceDeficits(evDevices);
+  const totalEvKw = evDevices.reduce((sum, ev) => sum + ev.pActualKw, 0);
+  const nonEvKw = totalKw - totalEvKw;
+  const feederLimitKw = Math.min(limitKw, config.controlParams.globalKwLimit);
+  const availableForEv = Math.max(feederLimitKw - nonEvKw, 0);
+  const activeProgram = await getActiveDrProgram(now);
+  const { adjustedAvailable, shedApplied, elasticity } = applyDrPolicy(
+    activeProgram,
+    availableForEv,
+    evDevices,
+  );
+  const effectiveAvailableForEv = adjustedAvailable;
+
+  if (evDevices.length === 0) {
+    console.log(`[controlLoop:${feederId}] no dispatchable devices found, skipping control`);
+    return { commandsPublished: 0, staleTelemetryDropped: stale.length };
+  }
+
+  for (const ev of evDevices) {
+    recordTrackingSample({
+      deviceId: ev.id,
+      type: ev.type,
+      siteId: ev.siteId,
+      feederId,
+      priority: ev.priority,
+      soc: ev.soc,
+      isPhysical: ev.isPhysical,
+      setpointKw: ev.currentSetpointKw,
+      actualKw: ev.pActualKw,
+    });
+  }
+
+  const overloaded = effectiveAvailableForEv < totalEvKw - marginKw;
+  const hasHeadroom = effectiveAvailableForEv > totalEvKw + marginKw;
+
+  const allowedShares = computeAllowedShares(
+    evDevices,
+    effectiveAvailableForEv,
+    config.controlParams,
+  );
+  const perDeviceImpact = evDevices.map((ev) => {
+    const allowed = allowedShares.get(ev.id) ?? ev.currentSetpointKw;
+    const utilization = ev.pMaxKw > 0 ? Math.min(Math.max(allowed / ev.pMaxKw, 0), 1) : 0;
+    const priority = priorityLookup.get(ev.id) ?? ev.priority ?? 1;
+    return {
+      deviceId: ev.id,
+      allowedKw: allowed,
+      pMax: ev.pMaxKw,
+      utilizationPct: utilization * 100,
+      priority,
+    };
+  });
+
+  const avgUtilizationPct =
+    perDeviceImpact.reduce((sum, d) => sum + d.utilizationPct, 0) /
+    (perDeviceImpact.length || 1);
+  const totalPriority = perDeviceImpact.reduce((sum, d) => sum + d.priority, 0) || 1;
+  const priorityWeightedUtilizationPct =
+    perDeviceImpact.reduce((sum, d) => sum + d.utilizationPct * d.priority, 0) /
+    totalPriority;
+
+  recordDrImpact({
+    timestampIso: now.toISOString(),
+    availableBeforeKw: availableForEv,
+    availableAfterKw: effectiveAvailableForEv,
+    shedAppliedKw: shedApplied,
+    elasticityFactor: elasticity,
+    totalEvKw,
+    nonEvKw,
+    avgUtilizationPct,
+    priorityWeightedUtilizationPct,
+    activeProgram,
+    perDevice: perDeviceImpact,
+    feederId,
+  });
+
+  if (!overloaded && !hasHeadroom) {
+    console.log(`[controlLoop:${feederId}] within margin, no changes`);
+    return { commandsPublished: 0, staleTelemetryDropped: stale.length };
+  }
+
+  const commands: { deviceId: string; newSetpoint: number; prevSetpoint: number }[] = [];
+  const deviceLogs: {
+    id: string;
+    priority: number;
+    deficit: number;
+    allowed: number;
+    prev: number;
+    next: number;
+    pMax: number;
+  }[] = [];
+
+  for (const ev of evDevices) {
+    const previous = deviceSetpoints.get(ev.id) ?? ev.currentSetpointKw;
+    let target = previous;
+
+    const allowedShare = allowedShares.get(ev.id) ?? 0;
+
+    if (overloaded) {
+      target = allowedShare;
+    } else if (hasHeadroom) {
+      target = Math.min(ev.pMaxKw, Math.max(previous + stepKw, allowedShare));
     }
 
-    const offlineToAlert = shouldAlertOffline(nowMs);
-    if (offlineToAlert.length) {
-      notifyOfflineDevices(offlineToAlert);
+    target = Math.min(Math.max(0, target), ev.pMaxKw);
+
+    const delta = target - previous;
+    let newSetpoint = previous;
+    if (Math.abs(delta) > stepKw) {
+      newSetpoint = previous + Math.sign(delta) * stepKw;
+    } else {
+      newSetpoint = target;
     }
 
-    markIterationStart(nowMs);
-    let errored = false;
+    newSetpoint = Math.min(Math.max(0, newSetpoint), ev.pMaxKw);
+
+    deviceLogs.push({
+      id: ev.id,
+      priority: priorityLookup.get(ev.id) ?? ev.priority ?? 1,
+      deficit: deviceDeficits.get(ev.id) ?? 0,
+      allowed: allowedShare,
+      prev: previous,
+      next: newSetpoint,
+      pMax: ev.pMaxKw,
+    });
+
+    if (Math.abs(newSetpoint - previous) > epsilon) {
+      commands.push({ deviceId: ev.id, newSetpoint, prevSetpoint: previous });
+    }
+  }
+
+  let published = 0;
+  if (commands.length > 0) {
+    const commandSummaries = commands.map((c) => ({
+      id: c.deviceId,
+      setpoint: c.newSetpoint.toFixed(2),
+      priority: priorityLookup.get(c.deviceId) ?? 1,
+    }));
+    const deficitSummaries = deviceLogs.map((log) => ({
+      id: log.id,
+      priority: log.priority,
+      deficit: log.deficit.toFixed(2),
+      allowed: log.allowed.toFixed(2),
+      prev: log.prev.toFixed(2),
+      next: log.next.toFixed(2),
+      pMax: log.pMax.toFixed(2),
+    }));
+    console.log(
+      `[controlLoop:${feederId}] total`,
+      totalKw.toFixed(2),
+      'limit',
+      limitKw.toFixed(2),
+      'nonEv',
+      nonEvKw.toFixed(2),
+      'availableEv',
+      availableForEv.toFixed(2),
+      'effectiveEv',
+      effectiveAvailableForEv.toFixed(2),
+      'dr',
+      activeProgram
+        ? {
+            mode: activeProgram.mode,
+            shed: shedApplied.toFixed(2),
+            elasticity: elasticity.toFixed(2),
+          }
+        : 'none',
+      'ev commands',
+      commandSummaries,
+      'ev deficits',
+      deficitSummaries,
+    );
+    published = publishCommands(
+      commands,
+      `feeder=${feederId} total=${totalKw.toFixed(2)} limit=${limitKw.toFixed(2)} availableForEv=${availableForEv.toFixed(2)} effective=${effectiveAvailableForEv.toFixed(2)}`,
+    );
+  } else {
+    const deficitSummaries = deviceLogs.map((log) => ({
+      id: log.id,
+      priority: log.priority,
+      deficit: log.deficit.toFixed(2),
+      allowed: log.allowed.toFixed(2),
+      prev: log.prev.toFixed(2),
+      next: log.next.toFixed(2),
+      pMax: log.pMax.toFixed(2),
+    }));
+    console.log(`[controlLoop:${feederId}] no setpoint changes beyond epsilon`, deficitSummaries);
+  }
+
+  return { commandsPublished: published, staleTelemetryDropped: stale.length };
+}
+
+export async function runControlLoopCycle(
+  now = new Date(),
+): Promise<ControlLoopIterationResult> {
+  const nowMs = now.getTime();
+  const stalledState = shouldAlertStall(nowMs);
+  if (stalledState) {
+    notifyStalledLoop(stalledState);
+  }
+
+  const offlineToAlert = shouldAlertOffline(nowMs);
+  if (offlineToAlert.length) {
+    notifyOfflineDevices(offlineToAlert);
+  }
+
+  markIterationStart(nowMs);
+  let errored = false;
+  let commandsPublished = 0;
+  let staleTelemetryDropped = 0;
+  let offlineDevices: Set<string> = new Set();
+
+  try {
+    offlineDevices = getOfflineDeviceIds(nowMs);
+    if (offlineDevices.size > 0) {
+      console.warn(`[controlLoop] ${offlineDevices.size} device(s) offline across feeders`);
+    }
+    const devices = await getAllDevices();
+    const feederIds = await getFeederIds();
+    const activeFeeders = feederIds.length ? feederIds : [config.defaultFeederId];
+
+    for (const feederId of activeFeeders) {
+      const result = await runFeederTick(feederId, now, offlineDevices, devices);
+      commandsPublished += result.commandsPublished;
+      staleTelemetryDropped += result.staleTelemetryDropped;
+    }
+  } catch (err) {
+    errored = true;
+    markIterationError(err, Date.now());
+    console.error('[controlLoop] error', err);
+  } finally {
+    if (!errored) {
+      markIterationSuccess(Date.now());
+    }
+  }
+
+  return {
+    offlineDevices: [...offlineDevices],
+    commandsPublished,
+    staleTelemetryDropped,
+    timestampIso: new Date().toISOString(),
+  };
+}
+
+export function startControlLoop(options?: {
+  intervalMs?: number;
+  onCycleComplete?: (result: ControlLoopIterationResult) => void;
+}): { stop: () => void; intervalMs: number } {
+  const intervalMs = options?.intervalMs ?? config.controlIntervalSeconds * 1000;
+  const timer = setInterval(async () => {
     try {
-      const offlineDevices = getOfflineDeviceIds(nowMs);
-      if (offlineDevices.size > 0) {
-        console.warn(`[controlLoop] ${offlineDevices.size} device(s) offline across feeders`);
-      }
-      const devices = await getAllDevices();
-      const feederIds = await getFeederIds();
-      const activeFeeders = feederIds.length ? feederIds : [config.defaultFeederId];
-
-      for (const feederId of activeFeeders) {
-        await runFeederTick(feederId, now, offlineDevices, devices);
-      }
+      const result = await runControlLoopCycle();
+      options?.onCycleComplete?.(result);
     } catch (err) {
-      errored = true;
-      markIterationError(err, Date.now());
-      console.error('[controlLoop] error', err);
-    } finally {
-      if (!errored) {
-        markIterationSuccess(Date.now());
-      }
+      console.error('[controlLoop] scheduled iteration failed', err);
     }
   }, intervalMs);
+
+  return {
+    stop: () => clearInterval(timer),
+    intervalMs,
+  };
 }

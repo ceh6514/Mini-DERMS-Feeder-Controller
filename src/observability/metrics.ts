@@ -2,13 +2,15 @@ import config from '../config';
 import { pool } from '../db';
 import { getMqttStatus } from '../mqttClient';
 import { getControlLoopState } from '../state/controlLoopMonitor';
+import { getTelemetryQualitySnapshot } from '../state/telemetryQuality';
 import logger from '../logger';
 
 type MetricName =
   | 'derms_db_up'
   | 'derms_mqtt_up'
   | 'derms_control_loop_ok'
-  | 'derms_control_loop_offline_devices';
+  | 'derms_control_loop_offline_devices'
+  | 'derms_stale_telemetry_dropped_total';
 
 type MetricDef = { help: string; type: 'gauge' };
 const metricDefs: Record<MetricName, MetricDef> = {
@@ -19,6 +21,10 @@ const metricDefs: Record<MetricName, MetricDef> = {
     help: 'Number of devices considered offline by the control loop',
     type: 'gauge',
   },
+  derms_stale_telemetry_dropped_total: {
+    help: 'Total number of telemetry samples ignored because they were stale',
+    type: 'gauge',
+  },
 };
 
 const gaugeValues: Record<MetricName, number> = {
@@ -26,6 +32,7 @@ const gaugeValues: Record<MetricName, number> = {
   derms_mqtt_up: 0,
   derms_control_loop_ok: 0,
   derms_control_loop_offline_devices: 0,
+  derms_stale_telemetry_dropped_total: 0,
 };
 
 export async function collectHealthMetrics() {
@@ -45,6 +52,9 @@ export async function collectHealthMetrics() {
     controlLoop.status !== 'error' && controlLoop.status !== 'stalled';
   gaugeValues.derms_control_loop_ok = healthyLoop ? 1 : 0;
   gaugeValues.derms_control_loop_offline_devices = controlLoop.offlineDevices.length;
+
+  const telemetryQuality = getTelemetryQualitySnapshot();
+  gaugeValues.derms_stale_telemetry_dropped_total = telemetryQuality.staleTelemetryDropped;
 }
 
 export function shouldExposePrometheus(): boolean {

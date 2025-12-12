@@ -11,6 +11,7 @@ import logger from './logger';
 
 export let mqttClient: any = null;
 let lastError: string | null = null;
+const baseTopic = config.mqtt.topicPrefix.replace(/\/+$/, '');
 
 /**
  * Parse a telemetry message and write it into the DB.
@@ -19,7 +20,7 @@ async function parseAndStoreMessage(topic: string, payload: Buffer) {
   try {
     const raw = JSON.parse(payload.toString('utf-8')) as Record<string, unknown>;
     const topicParts = topic.split('/');
-    const fallbackDeviceId = topicParts[2];
+    const fallbackDeviceId = topicParts[topicParts.length - 1];
     const telemetry = validateTelemetryPayload(raw, fallbackDeviceId);
 
     //Upsert device metadata (best-effort)
@@ -75,18 +76,18 @@ export async function startMqttClient(): Promise<void> {
       port: config.mqtt.port,
     });
 
-    mqttClient.subscribe('der/telemetry/#', (err: Error | null) => {
+    mqttClient.subscribe(`${baseTopic}/telemetry/#`, (err: Error | null) => {
       if (err) {
         logger.error({ err }, '[mqttClient] subscribe error');
       } else {
-        logger.info('[mqttClient] subscribed to der/telemetry/#');
+        logger.info('[mqttClient] subscribed to telemetry topic');
       }
     });
   });
 
   mqttClient.on('message', (topic: string, payload: Buffer) => {
     //Handle telemetry messages
-    if (topic.startsWith('der/telemetry/')) {
+    if (topic.startsWith(`${baseTopic}/telemetry/`)) {
       parseAndStoreMessage(topic, payload).catch((err) => {
         logger.error({ err }, '[mqttClient] failed to handle telemetry message');
       });
@@ -116,4 +117,17 @@ export function getMqttStatus() {
     connected: Boolean(mqttClient?.connected),
     lastError,
   };
+}
+
+export async function stopMqttClient(): Promise<void> {
+  if (!mqttClient) return;
+
+  await new Promise<void>((resolve) => {
+    try {
+      mqttClient.end(true, {}, resolve);
+    } catch {
+      resolve();
+    }
+  });
+  mqttClient = null;
 }

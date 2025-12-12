@@ -109,7 +109,18 @@ export async function insertTelemetry(row: TelemetryRow): Promise<void> {
       shortwave_radiation_wm2,
       estimated_power_w
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    ON CONFLICT (device_id, ts) DO UPDATE
+    SET
+      type = EXCLUDED.type,
+      p_actual_kw = EXCLUDED.p_actual_kw,
+      p_setpoint_kw = EXCLUDED.p_setpoint_kw,
+      soc = EXCLUDED.soc,
+      site_id = EXCLUDED.site_id,
+      feeder_id = EXCLUDED.feeder_id,
+      cloud_cover_pct = EXCLUDED.cloud_cover_pct,
+      shortwave_radiation_wm2 = EXCLUDED.shortwave_radiation_wm2,
+      estimated_power_w = EXCLUDED.estimated_power_w;
   `;
   await query(text, [
     row.device_id,
