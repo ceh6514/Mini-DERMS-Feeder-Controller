@@ -22,6 +22,16 @@ import { optimizeAllocations } from './allocationOptimizer';
 import { clampSoc, computeSocAwareAllocations, isDispatchableDevice } from './scheduler';
 import { recordTrackingSample } from '../state/trackingError';
 import { recordStaleTelemetry } from '../state/telemetryQuality';
+import { getSafetyPolicy, TelemetryMissingBehavior } from '../safetyPolicy';
+import {
+  getControlStatus,
+  getLastCommand,
+  recordCommand,
+  recordFailure,
+  recordSuccess,
+} from '../state/safetyState';
+import { incrementCounter, observeHistogram, setGauge } from '../observability/metrics';
+import logger from '../logger';
 
 // Track the most recent setpoint we have commanded for each device.
 export const deviceSetpoints = new Map<string, number>();
@@ -313,17 +323,19 @@ export function applyDrPolicy(
   return { adjustedAvailable: availableForEv, shedApplied: 0, elasticity: 1 };
 }
 
-function publishCommands(
+async function publishCommands(
   commands: { deviceId: string; newSetpoint: number; prevSetpoint: number }[],
-  logContext: string
+  logContext: string,
+  nowMs: number,
 
-): number {
+): Promise<number> {
   if (commands.length === 0) return 0;
 
   if (!mqttClient || !mqttClient.connected) {
     console.warn(
       `[controlLoop] MQTT not connected, skipping publish this tick (${logContext})`
     );
+    incrementCounter('derms_mqtt_disconnect_total');
     return 0;
   }
 
@@ -334,23 +346,74 @@ function publishCommands(
     try {
       const topic = `${prefix}/control/${cmd.deviceId}`;
       const payload = JSON.stringify({ p_setpoint_kw: cmd.newSetpoint });
-      mqttClient.publish(topic, payload);
+      const start = Date.now();
+      const policy = getSafetyPolicy();
+      let attempts = 0;
+      let success = false;
+      let lastError: unknown = null;
+      while (attempts <= policy.mqttMaxRetries && !success) {
+        attempts += 1;
+        try {
+          const publishPromise = new Promise<void>((resolve, reject) => {
+            mqttClient.publish(
+              topic,
+              payload,
+              { qos: 0 },
+              (err: Error | null | undefined) => {
+                if (err) reject(err);
+                else resolve();
+              },
+            );
+          });
+          const timeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('mqtt_publish_timeout')), policy.mqttPublishTimeoutMs),
+          );
+          await Promise.race([publishPromise, timeout]);
+          success = true;
+        } catch (err) {
+          lastError = err;
+          if (attempts > policy.mqttMaxRetries) break;
+          const backoff = policy.mqttRetryBackoffMs * Math.pow(2, attempts - 1);
+          await new Promise((resolve) => setTimeout(resolve, backoff));
+        }
+      }
+
+      const latency = Date.now() - start;
+      observeHistogram('derms_mqtt_publish_latency_ms', latency);
+
+      if (!success) {
+        incrementCounter('derms_mqtt_publish_fail_total', {
+          device_id: cmd.deviceId,
+        });
+        recordFailure(policy, 'mqtt', 'mqtt_publish_failure');
+        logger.error(
+          { deviceId: cmd.deviceId, err: lastError as Record<string, unknown> },
+          '[controlLoop] failed to publish command',
+        );
+        continue;
+      }
+
       deviceSetpoints.set(cmd.deviceId, cmd.newSetpoint);
+      recordCommand(cmd.deviceId, cmd.newSetpoint, nowMs);
       published += 1;
     } catch (err) {
       console.error('[controlLoop] failed to publish command', err);
+      incrementCounter('derms_mqtt_publish_fail_total', { device_id: cmd.deviceId });
     }
   }
 
   return published;
 }
 
+export const publishCommandsForTest = publishCommands;
+
 const marginKw = 0.5;
 const epsilon = 0.1;
 const stepKw = 1.0;
 
 function partitionTelemetry(latest: TelemetryRow[], nowMs: number) {
-  const thresholdMs = config.staleTelemetryThresholdSeconds * 1000;
+  const policy = getSafetyPolicy();
+  const thresholdMs = policy.telemetryStaleMs;
   const fresh: TelemetryRow[] = [];
   const stale: TelemetryRow[] = [];
 
@@ -365,6 +428,8 @@ function partitionTelemetry(latest: TelemetryRow[], nowMs: number) {
 
   return { fresh, stale };
 }
+
+export const partitionTelemetryForTest = partitionTelemetry;
 
 async function runFeederTick(
   feederId: string,
@@ -383,6 +448,32 @@ async function runFeederTick(
 
   for (const row of stale) {
     recordStaleTelemetry(row);
+    incrementCounter('derms_stale_telemetry_total', {
+      device_id: row.device_id,
+      device_type: row.type,
+    });
+    logger.warn('[controlLoop] stale telemetry detected', {
+      deviceId: row.device_id,
+      feederId,
+      age_ms: now.getTime() - row.ts.getTime(),
+    });
+  }
+
+  const missingDeviceIds = feederDevices
+    .filter((device) => isDispatchableDevice(device))
+    .map((device) => device.id)
+    .filter((id) => !fresh.some((row) => row.device_id === id) && !stale.some((row) => row.device_id === id));
+
+  for (const missingId of missingDeviceIds) {
+    const deviceMeta = feederDevices.find((d) => d.id === missingId);
+    incrementCounter('derms_missing_telemetry_total', {
+      device_id: missingId,
+      device_type: deviceMeta?.type ?? 'unknown',
+    });
+    logger.warn('[controlLoop] missing telemetry for device', {
+      deviceId: missingId,
+      feederId,
+    });
   }
 
   if (offlineDevices.size > 0) {
@@ -394,11 +485,57 @@ async function runFeederTick(
     }
   }
 
-  const onlineTelemetry = fresh.filter((row) => !offlineDevices.has(row.device_id));
+  const policy = getSafetyPolicy();
+  const fallbackCommands: { deviceId: string; newSetpoint: number; prevSetpoint: number }[] = [];
+  const excludedIds = new Set<string>();
+
+  const handleMissing = (
+    deviceId: string,
+    behavior: TelemetryMissingBehavior,
+    deviceType: string,
+  ) => {
+    const last = getCurrentSetpoint(deviceId, {
+      device_id: deviceId,
+      ts: now,
+      type: deviceType,
+      p_actual_kw: 0,
+      site_id: feederId,
+      feeder_id: feederId,
+    });
+    let target = 0;
+    if (behavior === 'HOLD_LAST') {
+      const lastRecord = getLastCommand(deviceId);
+      if (lastRecord && now.getTime() - lastRecord.atMs <= policy.holdLastMaxMs) {
+        target = lastRecord.value;
+      }
+    }
+    if (behavior === 'EXCLUDE_DEVICE') {
+      excludedIds.add(deviceId);
+      target = 0;
+    }
+    fallbackCommands.push({ deviceId, newSetpoint: target, prevSetpoint: last });
+  };
+
+  for (const row of stale) {
+    handleMissing(row.device_id, policy.telemetryMissingBehavior, row.type);
+  }
+  for (const missing of missingDeviceIds) {
+    const deviceMeta = feederDevices.find((d) => d.id === missing);
+    handleMissing(missing, policy.telemetryMissingBehavior, deviceMeta?.type ?? 'unknown');
+  }
+
+  const onlineTelemetry = fresh.filter(
+    (row) => !offlineDevices.has(row.device_id) && !excludedIds.has(row.device_id),
+  );
 
   if (onlineTelemetry.length === 0) {
-    console.log(`[controlLoop:${feederId}] no telemetry yet, skipping tick`);
-    return { commandsPublished: 0, staleTelemetryDropped: stale.length };
+    const publishedFallback = await publishCommands(
+      fallbackCommands,
+      `feeder=${feederId} fallback_only`,
+      now.getTime(),
+    );
+    console.log(`[controlLoop:${feederId}] no telemetry yet, publishing safe defaults`);
+    return { commandsPublished: publishedFallback, staleTelemetryDropped: stale.length };
   }
 
   const totalKw = onlineTelemetry.reduce((sum, row) => sum + (row.p_actual_kw || 0), 0);
@@ -418,7 +555,12 @@ async function runFeederTick(
 
   if (evDevices.length === 0) {
     console.log(`[controlLoop:${feederId}] no dispatchable devices found, skipping control`);
-    return { commandsPublished: 0, staleTelemetryDropped: stale.length };
+    const publishedFallback = await publishCommands(
+      fallbackCommands,
+      `feeder=${feederId} no_dispatchable`,
+      now.getTime(),
+    );
+    return { commandsPublished: publishedFallback, staleTelemetryDropped: stale.length };
   }
 
   for (const ev of evDevices) {
@@ -574,9 +716,10 @@ async function runFeederTick(
       'ev deficits',
       deficitSummaries,
     );
-    published = publishCommands(
-      commands,
+    published = await publishCommands(
+      [...fallbackCommands, ...commands],
       `feeder=${feederId} total=${totalKw.toFixed(2)} limit=${limitKw.toFixed(2)} availableForEv=${availableForEv.toFixed(2)} effective=${effectiveAvailableForEv.toFixed(2)}`,
+      now.getTime(),
     );
   } else {
     const deficitSummaries = deviceLogs.map((log) => ({
@@ -628,15 +771,30 @@ export async function runControlLoopCycle(
       commandsPublished += result.commandsPublished;
       staleTelemetryDropped += result.staleTelemetryDropped;
     }
+    recordSuccess();
   } catch (err) {
     errored = true;
+    recordFailure(getSafetyPolicy(), 'db', 'loop_error');
     markIterationError(err, Date.now());
     console.error('[controlLoop] error', err);
+    incrementCounter('derms_db_error_total', { operation: 'read' });
   } finally {
     if (!errored) {
       markIterationSuccess(Date.now());
     }
   }
+
+  const statusSnapshot = getControlStatus();
+  setGauge(
+    'derms_control_degraded',
+    statusSnapshot.degradedReason ? 1 : 0,
+    { reason: statusSnapshot.degradedReason ?? 'none' },
+  );
+  setGauge(
+    'derms_control_stopped',
+    statusSnapshot.stoppedReason ? 1 : 0,
+    { reason: statusSnapshot.stoppedReason ?? 'none' },
+  );
 
   return {
     offlineDevices: [...offlineDevices],
