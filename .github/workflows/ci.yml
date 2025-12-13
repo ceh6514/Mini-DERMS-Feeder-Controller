@@ -4,12 +4,16 @@ on:
   push:
     branches: ["main"]
   pull_request:
-    branches: ["main"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   backend:
     name: Backend
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -24,17 +28,30 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint environment example
-        run: npm run lint:env
+      - name: Lint
+        run: npm run lint
 
-      - name: Type-check and build backend
-        run: npm run build
+      - name: Type-check
+        run: npm run typecheck
 
-      - name: Run backend tests
+      - name: Run unit/integration tests
         run: npm test
 
-      - name: Run end-to-end control path tests
+      - name: Run end-to-end tests
+        env:
+          DOCKER_BUILDKIT: 1
         run: npm run test:e2e
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts
+          path: |
+            artifacts/**
+            junit*.xml
+            coverage/**
+          if-no-files-found: ignore
 
   frontend:
     name: Frontend
@@ -43,6 +60,7 @@ jobs:
     defaults:
       run:
         working-directory: frontend
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -62,3 +80,13 @@ jobs:
 
       - name: Run frontend tests
         run: npm test
+
+      - name: Upload frontend artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-artifacts
+          path: |
+            frontend/coverage/**
+            frontend/junit*.xml
+          if-no-files-found: ignore

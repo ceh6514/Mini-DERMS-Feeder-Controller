@@ -118,6 +118,12 @@ The feeder controller uses a weighted allocator in [`src/controllers/controlLoop
 
 - **Unit tests**: `npm test` (build + Node.js test runner)
 - **End-to-end control path**: `npm run test:e2e`
+
+## CI & Demo Scenario
+
+- Run `npm run ci` (or `./scripts/ci_local.sh`) to execute linting, type-checking, unit/integration tests, and Docker-backed end-to-end tests locally. Docker is required for the e2e stage because it provisions Postgres and Mosquitto containers.
+- A reproducible demo can be launched with `npm run demo:scenario`, which uses the Docker Compose `sim` profile to start Postgres, Mosquitto, the backend, and the simulator with a unique MQTT topic prefix. After ~2 minutes it collects backend/simulator/broker logs, `/metrics`, `/api/health`, and a summary report into `artifacts/demo-run/` and compresses everything into `artifacts/demo-run.tar.gz`.
+- CI workflows mirror these commands and upload artifacts (logs, coverage/junit if present, and demo summaries) on failure to aid debugging.
   - Requires Docker with access to pull `postgres:16-alpine` and `eclipse-mosquitto:2`.
   - The suite launches ephemeral containers and a broker topic prefix like `derms-test/<timestamp>-<uuid>` so parallel runs do not clash.
   - You can override the MQTT topic prefix via `MQTT_TOPIC_PREFIX` and telemetry freshness threshold via `STALE_TELEMETRY_THRESHOLD_SECONDS` if needed.
