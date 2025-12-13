@@ -122,6 +122,8 @@ The feeder controller uses a weighted allocator in [`src/controllers/controlLoop
 
 - **Unit tests**: `npm test` (build + Node.js test runner)
 - **End-to-end control path**: `npm run test:e2e`
+  - Place e2e specs under `tests/e2e/` and name them `*.test.ts` or `*.spec.ts` so they compile to `dist/tests/e2e/*.test.js`/`*.spec.js`.
+  - The runner builds first, discovers compiled e2e files with `scripts/runE2eTests.sh`, and skips cleanly with a message when no specs exist.
 
 ### Local CI checks
 - Lint env and configuration: `npm run lint`
