@@ -1,6 +1,6 @@
 import fs from 'fs';
 import { randomUUID } from 'crypto';
-import mqtt from 'mqtt/dist/mqtt';
+import * as mqtt from "mqtt";
 import net from 'net';
 import { Pool as PgPool } from 'pg';
 import { spawnSync } from 'node:child_process';

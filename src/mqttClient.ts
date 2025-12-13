@@ -1,4 +1,4 @@
-import mqtt from 'mqtt/dist/mqtt';
+import * as mqtt from "mqtt";
 import config from './config';
 import { upsertDevice } from './repositories/devicesRepo';
 import { insertTelemetry } from './repositories/telemetryRepo';
