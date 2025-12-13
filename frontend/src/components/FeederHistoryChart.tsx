@@ -1,3 +1,4 @@
+import React from 'react';
 import type { FeederHistoryResponse } from '../api/types';
 
 interface FeederHistoryChartProps {
@@ -253,4 +254,4 @@ const FeederHistoryChart = ({ data, loading, error }: FeederHistoryChartProps) =
   );
 };
 
-export default FeederHistoryChart;
+export default React.memo(FeederHistoryChart);

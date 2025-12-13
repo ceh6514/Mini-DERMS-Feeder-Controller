@@ -44,6 +44,10 @@ If you prefer to run pieces yourself:
    npm install
    npm run dev
    ```
+   For a production-like preview, build once and serve the optimized bundle:
+   ```bash
+   npm run build && npm run preview -- --host --port 4173
+   ```
 4. **Optional simulator (local Python)**:
    ```bash
    python -m venv .venv
@@ -119,6 +123,12 @@ The feeder controller uses a weighted allocator in [`src/controllers/controlLoop
 - **Unit tests**: `npm test` (build + Node.js test runner)
 - **End-to-end control path**: `npm run test:e2e`
 
+### Local CI checks
+- Lint env and configuration: `npm run lint`
+- TypeScript type safety: `npm run typecheck`
+- Full unit suite: `npm test`
+- Everything end-to-end (requires Docker): `npm run ci`
+
 ## CI & Demo Scenario
 
 - Run `npm run ci` (or `./scripts/ci_local.sh`) to execute linting, type-checking, unit/integration tests, and Docker-backed end-to-end tests locally. Docker is required for the e2e stage because it provisions Postgres and Mosquitto containers.
@@ -127,6 +137,11 @@ The feeder controller uses a weighted allocator in [`src/controllers/controlLoop
   - Requires Docker with access to pull `postgres:16-alpine` and `eclipse-mosquitto:2`.
   - The suite launches ephemeral containers and a broker topic prefix like `derms-test/<timestamp>-<uuid>` so parallel runs do not clash.
   - You can override the MQTT topic prefix via `MQTT_TOPIC_PREFIX` and telemetry freshness threshold via `STALE_TELEMETRY_THRESHOLD_SECONDS` if needed.
+
+## Performance notes
+- Dashboard polling now uses a longer, jittered interval with visibility-aware backoff to avoid hogging CPU when the tab is hidden.
+- Telemetry charts and device widgets use memoization and smaller data windows to reduce unnecessary re-renders.
+- Frontend API calls support abort signals to prevent overlapping requests when switching devices quickly.
 
 ## Data lifecycle
 On startup, the service initializes the `devices`, `telemetry`, `events`, and `dr_programs` tables (see `src/db.ts`). The control loop and MQTT ingest operate continuously once the server is running.
