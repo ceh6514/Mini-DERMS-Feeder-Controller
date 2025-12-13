@@ -119,9 +119,10 @@ export async function insertTelemetry(row: TelemetryRow): Promise<'inserted' | '
       shortwave_radiation_wm2,
       estimated_power_w
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
     ON CONFLICT ON CONSTRAINT telemetry_device_ts_type_key DO UPDATE
     SET
+      message_id = EXCLUDED.message_id,
       message_version = EXCLUDED.message_version,
       message_type = EXCLUDED.message_type,
       sent_at = EXCLUDED.sent_at,

@@ -8,7 +8,7 @@ interface Props {
 }
 
 const SetpointActualChart: React.FC<Props> = ({ deviceId, telemetry }) => {
-  const points = useMemo(() => normalizeTelemetryForCharts(telemetry, 240), [telemetry]);
+  const points = useMemo(() => normalizeTelemetryForCharts(telemetry, 180), [telemetry]);
 
   if (!deviceId || points.length === 0) {
     return (
@@ -81,4 +81,12 @@ const SetpointActualChart: React.FC<Props> = ({ deviceId, telemetry }) => {
   );
 };
 
-export default SetpointActualChart;
+const areEqual = (prev: Props, next: Props) => {
+  if (prev.deviceId !== next.deviceId) return false;
+  if (prev.telemetry.length !== next.telemetry.length) return false;
+  const prevLast = prev.telemetry[prev.telemetry.length - 1]?.ts;
+  const nextLast = next.telemetry[next.telemetry.length - 1]?.ts;
+  return prevLast === nextLast;
+};
+
+export default React.memo(SetpointActualChart, areEqual);

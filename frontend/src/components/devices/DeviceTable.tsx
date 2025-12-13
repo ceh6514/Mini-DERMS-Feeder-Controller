@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { DeviceMetrics, DeviceWithLatest } from '../../api/types';
 
 interface Props {
@@ -11,18 +11,20 @@ interface Props {
 }
 
 const DeviceTable: React.FC<Props> = ({ devices, metrics, selectedId, onSelect, filter, onFilter }) => {
-  const filteredDevices = devices.filter((d) => {
-    if (filter === 'physical') return d.isPhysical || d.isPi;
-    if (filter === 'simulated') return !(d.isPhysical || d.isPi);
-    return true;
-  });
+  const filteredDevices = useMemo(() => {
+    return devices.filter((d) => {
+      if (filter === 'physical') return d.isPhysical || d.isPi;
+      if (filter === 'simulated') return !(d.isPhysical || d.isPi);
+      return true;
+    });
+  }, [devices, filter]);
 
-  const metricLookup = new Map(metrics.map((m) => [m.deviceId, m]));
+  const metricLookup = useMemo(() => new Map(metrics.map((m) => [m.deviceId, m])), [metrics]);
 
-  const spark = (value: number) => {
+  const spark = useCallback((value: number) => {
     const height = Math.min(100, Math.max(10, Math.abs(value) * 8));
     return <span style={{ height: `${height}%` }} />;
-  };
+  }, []);
 
   return (
     <div className="table-wrapper">
@@ -97,4 +99,4 @@ const DeviceTable: React.FC<Props> = ({ devices, metrics, selectedId, onSelect, 
   );
 };
 
-export default DeviceTable;
+export default React.memo(DeviceTable);

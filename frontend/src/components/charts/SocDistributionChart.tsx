@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { DeviceMetrics, DeviceWithLatest } from '../../api/types';
 
 interface Props {
@@ -7,16 +7,18 @@ interface Props {
 }
 
 const SocDistributionChart: React.FC<Props> = ({ devices, metrics }) => {
-  const entries = devices
-    .filter((d) => d.type === 'ev' || d.type === 'battery' || d.isPi)
-    .map((d) => {
-      const metric = metrics.find((m) => m.deviceId === d.id);
-      const soc = d.latestTelemetry?.soc ?? metric?.soc ?? null;
-      return { id: d.id, soc };
-    })
-    .filter((d) => d.soc !== null) as { id: string; soc: number }[];
+  const bars = useMemo(() => {
+    const entries = devices
+      .filter((d) => d.type === 'ev' || d.type === 'battery' || d.isPi)
+      .map((d) => {
+        const metric = metrics.find((m) => m.deviceId === d.id);
+        const soc = d.latestTelemetry?.soc ?? metric?.soc ?? null;
+        return { id: d.id, soc };
+      })
+      .filter((d) => d.soc !== null) as { id: string; soc: number }[];
 
-  const bars = entries.slice(0, 12);
+    return entries.slice(0, 12);
+  }, [devices, metrics]);
 
   return (
     <div className="card">
@@ -44,4 +46,13 @@ const SocDistributionChart: React.FC<Props> = ({ devices, metrics }) => {
   );
 };
 
-export default SocDistributionChart;
+const socEqual = (prev: Props, next: Props) => {
+  if (prev.devices.length !== next.devices.length) return false;
+  if (prev.metrics.length !== next.metrics.length) return false;
+  return prev.metrics.every(
+    (metric, idx) =>
+      metric.deviceId === next.metrics[idx]?.deviceId && metric.soc === next.metrics[idx]?.soc,
+  );
+};
+
+export default React.memo(SocDistributionChart, socEqual);
