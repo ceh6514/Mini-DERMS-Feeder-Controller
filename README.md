@@ -16,17 +16,27 @@ Controls a fleet of simulated DERs (solar/battery/EV chargers). Uses messaging (
 - (Optional) Python 3.9+ if you want to run the included device simulator
 
 ## 🐳 Docker Compose (one terminal)
-The fastest way to run the full stack (API, dashboard, database, MQTT, and simulator) is with Docker Compose. Copy the example env files, then bring everything up:
+For the quickest “everything running” experience (API, dashboard, Postgres, Mosquitto, and the simulator), use Docker Compose:
 
 ```bash
+# 1) Copy defaults you can safely edit
 cp .env.example .env
 cp frontend/.env.example frontend/.env
+
+# 2) Set your database credentials (recommended)
+#    These drive both Docker Compose and local dev. You can also change DB_USER.
+sed -i 's/^DB_USER=.*/DB_USER=postgres/' .env
+sed -i 's/^DB_PASSWORD=.*/DB_PASSWORD=replace-me-strong-password/' .env
+
+# 3) Start the stack with the simulator profile enabled
 docker compose --profile sim up --build
 ```
 
 - Dashboard: http://localhost:5173
 - API: http://localhost:3001
-- Simulator containers are included when the `sim` profile is enabled. Stop everything with `npm run stop:stack` or `docker compose down` when you are done.
+- Simulator: auto-starts with the `sim` profile to publish sample telemetry.
+- Stop everything with `docker compose down` (or `npm run stop:stack`).
+- Need different creds? Change `DB_USER`/`DB_PASSWORD` in `.env` and rerun the compose command (the Postgres container will use them on first create).
 
 The rebuilt dashboard highlights Pi-based DERs with a "Physical" badge, lets you filter by origin, and visualizes SOC distribution, tracking error, and setpoint-vs-actual curves. Select a device row to drive the animated charts.
 
