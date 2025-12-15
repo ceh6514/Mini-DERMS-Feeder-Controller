@@ -28,6 +28,7 @@ const Dashboard = () => {
   const [toast, setToast] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState('hero');
   const { user, logout } = useAuth();
+  const activeSectionRef = useRef(activeSection);
 
   const heroRef = useRef<HTMLDivElement | null>(null);
   const generationRef = useRef<HTMLDivElement | null>(null);
@@ -91,6 +92,43 @@ const Dashboard = () => {
     }
   }, [sectionRefs]);
 
+  useEffect(() => {
+    activeSectionRef.current = activeSection;
+  }, [activeSection]);
+
+  useEffect(() => {
+    const sectionOrder = Object.keys(sectionRefs);
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => {
+            const aIndex = sectionOrder.indexOf((a.target as HTMLElement).dataset.section ?? '');
+            const bIndex = sectionOrder.indexOf((b.target as HTMLElement).dataset.section ?? '');
+            return aIndex - bIndex;
+          });
+
+        const nextSection = visible[0]?.target.getAttribute('data-section');
+        if (nextSection && nextSection !== activeSectionRef.current) {
+          activeSectionRef.current = nextSection;
+          setActiveSection(nextSection);
+        }
+      },
+      {
+        threshold: 0.35,
+      },
+    );
+
+    const elements = Object.values(sectionRefs)
+      .map((ref) => ref.current)
+      .filter((el): el is HTMLElement => Boolean(el));
+
+    elements.forEach((el) => observer.observe(el));
+
+    return () => observer.disconnect();
+  }, [sectionRefs]);
+  
   return (
     <LayoutShell
       active={activeSection}
@@ -105,13 +143,13 @@ const Dashboard = () => {
       onLogout={logout}
     >
       {error && <div className="toast">{error}</div>}
-      <div ref={heroRef}>
+      <div ref={heroRef} data-section="hero">
         <HeroStrip summary={summary} health={health} devices={devices} tracking={tracking} theme={theme} />
       </div>
 
       <OrganicDivider />
 
-      <section ref={generationRef} className="section-block">
+      <section ref={generationRef} className="section-block" data-section="generation">
         <div className="section-head">
           <h2>
             <LineIcon name="power" size={20} /> Generation
@@ -124,7 +162,7 @@ const Dashboard = () => {
         </div>
       </section>
 
-      <section ref={consumptionRef} className="section-block">
+      <section ref={consumptionRef} className="section-block" data-section="consumption">
         <div className="section-head">
           <h2>
             <LineIcon name="leaf" size={20} /> Consumption
@@ -137,7 +175,7 @@ const Dashboard = () => {
         </div>
       </section>
 
-      <section ref={gridRef} className="section-block">
+      <section ref={gridRef} className="section-block" data-section="grid">
         <div className="section-head">
           <h2>
             <LineIcon name="alert" size={20} /> Grid health
@@ -158,7 +196,7 @@ const Dashboard = () => {
         </div>
       </section>
 
-      <section ref={forecastRef} className="section-block">
+      <section ref={forecastRef} className="section-block" data-section="forecast">
         <div className="section-head">
           <h2>
             <LineIcon name="cloud" size={20} /> Forecast
@@ -181,7 +219,7 @@ const Dashboard = () => {
         </div>
       </section>
 
-      <section ref={devicesRef} className="section-block">
+      <section ref={devicesRef} className="section-block" data-section="devices">
         <div className="section-head">
           <h2>
             <LineIcon name="device" size={20} /> Devices
@@ -194,7 +232,7 @@ const Dashboard = () => {
         </div>
       </section>
 
-      <section ref={settingsRef} className="section-block">
+      <section ref={settingsRef} className="section-block" data-section="settings">
         <div className="section-head">
           <h2>
             <LineIcon name="spark" size={20} /> Controls
