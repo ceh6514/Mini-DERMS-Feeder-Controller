@@ -3,6 +3,8 @@
 
 Controls a fleet of simulated DERs (solar/battery/EV chargers). Uses messaging (MQTT), a time-series database, and a backend service that makes control decisions. Has a small dashboard showing what the system is doing.
 
+<img width="1427" height="778" alt="Screenshot 2025-12-15 at 12 10 42 PM" src="https://github.com/user-attachments/assets/c1b8146c-228b-4612-955f-bee0b314603d" />
+
 ## What changed in this upgrade
 - The control loop is now SOC-aware and priority-based, considering Pi-based DER agents (`pi-*`) alongside simulated EV/battery devices. It respects a global feeder limit, min SOC reserve, and a target SOC horizon, allocating headroom to higher-priority/low-SOC assets first.
 - A new tracking-error metric computes the rolling average of `p_actual_kw - p_setpoint_kw` per device and is exposed at `GET /api/metrics/tracking-error`.
