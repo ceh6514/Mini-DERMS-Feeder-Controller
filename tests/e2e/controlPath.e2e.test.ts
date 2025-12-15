@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mqttClient } from '../../src/mqttClient';
 import { dockerAvailable, startTestStack, waitFor } from './testStack';
 
 const skipReason = dockerAvailable ? undefined : 'Docker is required for e2e tests';
@@ -156,6 +155,7 @@ test('end-to-end control path', { skip: skipReason }, async (t) => {
       await collector.waitForCount(1, 10000);
 
       await stack.restartBroker();
+      const { mqttClient } = await import('../../src/mqttClient');
       await waitFor(() => Boolean(mqttClient?.connected), 15000, 'mqtt reconnect');
 
       await stack.publishTelemetry('reconnect-1', {
