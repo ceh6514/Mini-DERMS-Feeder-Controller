@@ -1,4 +1,5 @@
-import * as mqtt from "mqtt";
+import mqtt from 'mqtt';
+type NodeMqttClient = ReturnType<typeof mqtt.connect>;
 import config from './config';
 import { upsertDevice } from './repositories/devicesRepo';
 import { insertTelemetry } from './repositories/telemetryRepo';
@@ -8,36 +9,43 @@ import { ContractValidationError } from './contracts';
 import logger from './logger';
 import { incrementCounter } from './observability/metrics';
 
-export let mqttClient: any = null;
+export let mqttClient: NodeMqttClient | null = null;
 let lastError: string | null = null;
 const baseTopic = config.mqtt.topicPrefix.replace(/\/+$/, '');
+let telemetryHandler: TelemetryHandler | null = null;
 
-const telemetryHandler = new TelemetryHandler({
-  save: (row) =>
-    insertTelemetry({
-      message_id: row.message_id,
-      message_version: row.message_version,
-      message_type: row.message_type,
-      sent_at: row.sent_at,
-      source: row.source,
-      device_id: row.device_id,
-      ts: row.ts,
-      type: row.type,
-      p_actual_kw: row.p_actual_kw,
-      p_setpoint_kw: row.p_setpoint_kw,
-      soc: row.soc,
-      site_id: row.site_id,
-      feeder_id: row.feeder_id,
-    }),
-});
+function getTelemetryHandler() {
+  if (!telemetryHandler) {
+    telemetryHandler = new TelemetryHandler({
+      save: (row) =>
+        insertTelemetry({
+          message_id: row.message_id,
+          message_version: row.message_version,
+          message_type: row.message_type,
+          sent_at: row.sent_at,
+          source: row.source,
+          device_id: row.device_id,
+          ts: row.ts,
+          type: row.type,
+          p_actual_kw: row.p_actual_kw,
+          p_setpoint_kw: row.p_setpoint_kw,
+          soc: row.soc,
+          site_id: row.site_id,
+          feeder_id: row.feeder_id,
+        }),
+    });
+  }
+  return telemetryHandler;
+}
 
 /**
  * Parse a telemetry message and write it into the DB.
- */
+  */
 async function parseAndStoreMessage(topic: string, payload: Buffer) {
   try {
     const raw = JSON.parse(payload.toString('utf-8')) as Record<string, unknown>;
-    const result = await telemetryHandler.handle(raw);
+    const handler = getTelemetryHandler();
+    const result = await handler.handle(raw);
 
     if (!result.parsed) return;
     const telemetry = result.parsed;
@@ -145,4 +153,5 @@ export async function stopMqttClient(): Promise<void> {
     }
   });
   mqttClient = null;
+  telemetryHandler = null;
 }

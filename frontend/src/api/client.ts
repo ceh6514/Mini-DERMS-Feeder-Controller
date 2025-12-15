@@ -290,8 +290,9 @@ export async function fetchTrackingErrors(
 export async function fetchDeviceTelemetry(
   deviceId: string,
   limit = 120,
+  signal?: AbortSignal,
 ): Promise<DeviceTelemetry[]> {
-  const res = await authFetch(`/api/telemetry/${deviceId}?limit=${limit}`);
+  const res = await authFetch(`/api/telemetry/${deviceId}?limit=${limit}`, { signal });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Failed to fetch telemetry for ${deviceId}: ${text}`);

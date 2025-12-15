@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { DeviceMetrics } from '../../api/types';
 
 interface Props {
@@ -6,8 +6,11 @@ interface Props {
 }
 
 const TrackingErrorChart: React.FC<Props> = ({ metrics }) => {
-  const sorted = [...metrics].sort((a, b) => b.avgAbsError - a.avgAbsError).slice(0, 8);
-  const maxErr = Math.max(1, ...sorted.map((m) => m.avgAbsError));
+  const sorted = useMemo(
+    () => [...metrics].sort((a, b) => b.avgAbsError - a.avgAbsError).slice(0, 8),
+    [metrics],
+  );
+  const maxErr = useMemo(() => Math.max(1, ...sorted.map((m) => m.avgAbsError)), [sorted]);
 
   return (
     <div className="card">
@@ -38,4 +41,11 @@ const TrackingErrorChart: React.FC<Props> = ({ metrics }) => {
   );
 };
 
-export default TrackingErrorChart;
+const trackingEqual = (prev: Props, next: Props) => {
+  if (prev.metrics.length !== next.metrics.length) return false;
+  const prevSignature = prev.metrics.map((m) => `${m.deviceId}:${m.avgAbsError}`).join('|');
+  const nextSignature = next.metrics.map((m) => `${m.deviceId}:${m.avgAbsError}`).join('|');
+  return prevSignature === nextSignature;
+};
+
+export default React.memo(TrackingErrorChart, trackingEqual);

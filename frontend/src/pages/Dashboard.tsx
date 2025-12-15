@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import LayoutShell from '../components/layout/LayoutShell';
 import DeviceTable from '../components/devices/DeviceTable';
 import SetpointActualChart from '../components/charts/SetpointActualChart';
@@ -37,15 +37,18 @@ const Dashboard = () => {
   const devicesRef = useRef<HTMLDivElement | null>(null);
   const settingsRef = useRef<HTMLDivElement | null>(null);
 
-  const sectionRefs = {
-    hero: heroRef,
-    generation: generationRef,
-    consumption: consumptionRef,
-    grid: gridRef,
-    forecast: forecastRef,
-    devices: devicesRef,
-    settings: settingsRef,
-  } as const;
+  const sectionRefs = useMemo(
+    () => ({
+      hero: heroRef,
+      generation: generationRef,
+      consumption: consumptionRef,
+      grid: gridRef,
+      forecast: forecastRef,
+      devices: devicesRef,
+      settings: settingsRef,
+    }),
+    [],
+  );
 
   useEffect(() => {
     fetchFeeders()
@@ -57,11 +60,21 @@ const Dashboard = () => {
   }, []);
 
   useEffect(() => {
-    if (selectedId) {
-      fetchDeviceTelemetry(selectedId, 120)
-        .then(setDeviceTelemetry)
-        .catch((err) => setToast(err instanceof Error ? err.message : 'Failed to load telemetry'));
+    if (!selectedId) {
+      setDeviceTelemetry([]);
+      return undefined;
     }
+
+    const controller = new AbortController();
+
+    fetchDeviceTelemetry(selectedId, 120, controller.signal)
+      .then((data) => setDeviceTelemetry(data))
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setToast(err instanceof Error ? err.message : 'Failed to load telemetry');
+      });
+
+    return () => controller.abort();
   }, [selectedId]);
 
   const viewDevices = useMemo(() => {
@@ -70,13 +83,13 @@ const Dashboard = () => {
     return devices;
   }, [devices, filter]);
 
-  const handleNav = (key: string) => {
+  const handleNav = useCallback((key: string) => {
     setActiveSection(key);
     const ref = sectionRefs[key as keyof typeof sectionRefs];
     if (ref?.current) {
       ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  };
+  }, [sectionRefs]);
 
   return (
     <LayoutShell

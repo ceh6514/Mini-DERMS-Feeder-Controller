@@ -1,10 +1,10 @@
 import fs from 'fs';
 import { randomUUID } from 'crypto';
-import * as mqtt from "mqtt";
+import mqtt from 'mqtt';
+type MqttClient = ReturnType<typeof mqtt.connect>;
 import net from 'net';
 import { Pool as PgPool } from 'pg';
 import { spawnSync } from 'node:child_process';
-type MqttClient = ReturnType<typeof mqtt.connect>;
 type PgPoolType = any;
 import type { ControlLoopIterationResult } from '../../src/controllers/controlLoop';
 import type { StartedServer } from '../../src/server';
