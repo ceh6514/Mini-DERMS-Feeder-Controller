@@ -12,6 +12,13 @@ import * as telemetryRepo from '../src/repositories/telemetryRepo';
 import * as eventsRepo from '../src/repositories/eventsRepo';
 import * as drProgramsRepo from '../src/repositories/drProgramsRepo';
 import { DrProgramInput } from '../src/repositories/drProgramsRepo';
+import { verifyPassword } from '../src/security/passwords';
+
+const testPasswords: Record<string, string> = {
+  admin: 'Adm1n!2345678',
+  operator: 'Op3rator!23456',
+  viewer: 'View3r!23456',
+};
 
 function createApp() {
   const app = express();
@@ -55,7 +62,12 @@ function getOperatorCreds() {
     throw new Error('No AUTH_USERS configured for tests');
   }
 
-  return operatorUser;
+  const password = testPasswords[operatorUser.username];
+  if (!password) {
+    throw new Error(`No test password registered for ${operatorUser.username}`);
+  }
+
+  return { ...operatorUser, password };
 }
 
 async function startServer() {
@@ -76,8 +88,11 @@ async function startServer() {
 async function loginAndGetToken(
   baseUrl: string,
   username = getOperatorCreds().username,
-  password = getOperatorCreds().password,
+  password = testPasswords[username],
 ) {
+  if (!password) {
+    throw new Error(`Missing test password for ${username}`);
+  }
   const res = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -91,6 +106,15 @@ async function loginAndGetToken(
 describe('API authentication and routing', () => {
   beforeEach(() => {
     mock.restoreAll();
+  });
+
+  beforeEach(async () => {
+    for (const user of config.auth.users) {
+      const password = testPasswords[user.username];
+      if (!password) continue;
+      const valid = await verifyPassword(password, user.passwordHash);
+      assert.ok(valid, `Configured hash for ${user.username} should match the test fixture password`);
+    }
   });
 
   afterEach(() => {
@@ -171,6 +195,27 @@ describe('API authentication and routing', () => {
         headers: { Authorization: 'Bearer not-a-token' },
       });
       assert.strictEqual(malformedResp.status, 401);
+    } finally {
+      await close();
+    }
+  });
+
+  it('rejects invalid login attempts', async () => {
+    const { baseUrl, close } = await startServer();
+    try {
+      const badPasswordResp = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: getOperatorCreds().username, password: 'bad-password' }),
+      });
+      assert.strictEqual(badPasswordResp.status, 401);
+
+      const missingFields = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: getOperatorCreds().username }),
+      });
+      assert.strictEqual(missingFields.status, 400);
     } finally {
       await close();
     }

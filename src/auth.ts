@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { NextFunction, Request, Response, Router } from 'express';
 import config from './config';
+import { verifyPassword } from './security/passwords';
 
 export type UserRole = 'viewer' | 'operator' | 'admin';
 
@@ -119,14 +120,19 @@ export function requireRole(role: UserRole) {
 
 export const authRouter = Router();
 
-authRouter.post('/login', (req, res) => {
+authRouter.post('/login', async (req, res) => {
   const { username, password } = req.body ?? {};
   if (!username || !password) {
     return res.status(400).json({ error: 'username and password are required' });
   }
 
-  const user = config.auth.users.find((u) => u.username === username && u.password === password);
+  const user = config.auth.users.find((u) => u.username === username);
   if (!user) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
+  const isValid = await verifyPassword(password, user.passwordHash);
+  if (!isValid) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
