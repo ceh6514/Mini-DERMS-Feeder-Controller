@@ -60,7 +60,6 @@ class AgentConfig:
             "site_id": str,
             "p_max_kw": (int, float),
             "publish_interval_seconds": int,
-            "topic_prefix": str,
         }
         missing = [key for key in required if key not in data]
         if missing:
@@ -68,6 +67,10 @@ class AgentConfig:
         for key, expected_type in required.items():
             if not isinstance(data[key], expected_type):
                 raise TypeError(f"{key} must be of type {expected_type}")
+        topic_prefix = data.get("topic_prefix", "der")
+        if not isinstance(topic_prefix, str):
+            raise TypeError("topic_prefix must be of type <class 'str'>")
+        data["topic_prefix"] = topic_prefix
         if data["device_type"] not in {"pv", "battery", "ev"}:
             raise ValueError("device_type must be one of ['pv', 'battery', 'ev']")
 
@@ -234,7 +237,7 @@ def run_agent(config_path: Path) -> None:
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    publish_topic = f"der/telemetry/{config.device_id}"
+    topic_prefix = config.topic_prefix.rstrip("/")
     publish_topic = f"{topic_prefix}/telemetry/{config.device_type}/{config.device_id}"
     interval = max(1, int(config.publish_interval_seconds))
     last_time = time.time()
