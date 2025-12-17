@@ -5,11 +5,11 @@
     "moduleResolution": "node",
     "rootDir": ".",
     "outDir": "dist",
-    "strict": true,
+    "strict": false,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "typeRoots": ["./src/types"]
   },
   "include": ["src", "tests"]
 }

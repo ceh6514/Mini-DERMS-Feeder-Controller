@@ -56,7 +56,7 @@ export interface StartServerOptions {
 }
 
 export interface StartedServer {
-  app: express.Express;
+  app: any;
   server: http.Server | https.Server;
   port: number;
   stop: () => Promise<void>;

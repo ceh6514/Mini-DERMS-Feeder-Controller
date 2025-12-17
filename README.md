@@ -96,7 +96,10 @@ API routes (except `/api/health` and `/api/auth/login`) are protected by a light
 - **operator**: can issue controls such as DR events, simulation overrides, and telemetry ingest
 - **admin**: everything operators can do plus destructive operations (e.g., deleting DR programs)
 
-Secrets must be injected via environment variables or a secret manager (see `.env.example` for required keys). Provide a JSON array for `AUTH_USERS` (12+ character passwords with upper/lowercase, numbers, and symbols) and a 32+ character `JWT_SECRET`. Rotate both at least every 90 days. The frontend stores the JWT and attaches it to subsequent API calls after a successful login.
+Secrets must be injected via environment variables or a secret manager (see `.env.example` for required keys). Provide a JSON array for `AUTH_USERS` using **hashed** credentials (scrypt) and a 32+ character `JWT_SECRET`. Rotate both at least every 90 days. The frontend stores the JWT and attaches it to subsequent API calls after a successful login.
+
+- Generate hashes locally with `npm run auth:hash <password>` (uses Node's `crypto.scrypt` with timing-safe comparison) and store the output as `passwordHash` in `AUTH_USERS`.
+- Plaintext `password` entries are rejected at startup; only `passwordHash` is accepted for login validation.
 
 #### Secure deployment checklist (dashboard/API)
 - Terminate TLS at your ingress or load balancer and mount certificates into the backend when enabling `TLS_ENABLED=true`.

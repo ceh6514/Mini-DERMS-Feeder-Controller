@@ -1,6 +1,19 @@
 import dotenv from 'dotenv';
+import { isValidPasswordHash } from './security/passwords';
 
 dotenv.config();
+
+const weakPasswords = new Set([
+  'admin123',
+  'administrator',
+  'changeme',
+  'change-me',
+  'default',
+  'operator123',
+  'password',
+  'postgres',
+  'viewer123',
+]);
 
 export interface DbConfig {
   host: string;
@@ -54,25 +67,11 @@ export interface Config {
     tokenTtlHours: number;
     users: {
       username: string;
-      password: string;
+      passwordHash: string;
       role: 'viewer' | 'operator' | 'admin';
     }[];
   };
 }
-
-const weakPasswords = new Set([
-  'admin123',
-  'administrator',
-  'changeme',
-  'change-me',
-  'default',
-  'operator123',
-  'password',
-  'postgres',
-  'viewer123',
-]);
-
-const passwordComplexity = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^\w\s]).{12,}$/;
 
 function validateSecret(name: string, value: string | undefined, minLength = 24): string {
   if (!value) {
@@ -111,30 +110,35 @@ function parseUsers(): Config['auth']['users'] {
 
   return parsed.map((u, idx) => {
     if (!u || typeof u !== 'object') {
-      throw new Error(`[config] AUTH_USERS[${idx}] must be an object with username/password/role`);
+      throw new Error(`[config] AUTH_USERS[${idx}] must be an object with username/passwordHash/role`);
     }
 
     const username = (u as { username?: string }).username;
     const password = (u as { password?: string }).password;
+    const passwordHash = (u as { passwordHash?: string }).passwordHash;
     const role = (u as { role?: string }).role;
 
-    if (!username || !password || !role) {
-      throw new Error(`[config] AUTH_USERS[${idx}] must include username, password, and role`);
+    if (password) {
+      throw new Error(
+        `[config] AUTH_USERS[${idx}] must provide passwordHash (bcrypt) instead of plaintext password`,
+      );
+    }
+
+    if (!username || !passwordHash || !role) {
+      throw new Error(`[config] AUTH_USERS[${idx}] must include username, passwordHash, and role`);
     }
 
     if (!['viewer', 'operator', 'admin'].includes(role)) {
       throw new Error(`[config] AUTH_USERS[${idx}].role must be viewer, operator, or admin`);
     }
 
-    if (!passwordComplexity.test(password) || weakPasswords.has(password.toLowerCase())) {
-      throw new Error(
-        `[config] AUTH_USERS[${idx}] password must be 12+ characters with upper/lowercase, number, and symbol, and cannot be common defaults`,
-      );
+    if (!isValidPasswordHash(passwordHash)) {
+      throw new Error(`[config] AUTH_USERS[${idx}].passwordHash must be a valid bcrypt hash`);
     }
 
     return {
       username,
-      password,
+      passwordHash,
       role: role as Config['auth']['users'][number]['role'],
     };
   });
