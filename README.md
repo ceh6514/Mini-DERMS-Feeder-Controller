@@ -8,7 +8,7 @@ Controls a fleet of simulated DERs (solar/battery/EV chargers). Uses messaging (
 ## What changed in this upgrade
 - The control loop is now SOC-aware and priority-based, considering Pi-based DER agents (`pi-*`) alongside simulated EV/battery devices. It respects a global feeder limit, min SOC reserve, and a target SOC horizon, allocating headroom to higher-priority/low-SOC assets first.
 - A new tracking-error metric computes the rolling average of `p_actual_kw - p_setpoint_kw` per device and is exposed at `GET /api/metrics/tracking-error`.
-- The dashboard has been rebuilt into a responsive, animated control center with device origin filters, physical Pi badges, SOC/track-error charts, and smoother day/night theming.
+- The dashboard has been rebuilt into a responsive, animated control center with device origin filters, physical Pi badges, SOC/tracking-error charts, and smoother day/night theming.
 
 ## 🧰 Prerequisites
 - Docker and Docker Compose (for the one-command stack)
