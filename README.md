@@ -150,7 +150,7 @@ The feeder controller uses a weighted allocator in [`src/controllers/controlLoop
 - CI workflows mirror these commands and upload artifacts (logs, coverage/junit if present, and demo summaries) on failure to aid debugging.
   - Requires Docker with access to pull `postgres:16-alpine` and `eclipse-mosquitto:2`.
   - The suite launches ephemeral containers and a broker topic prefix like `derms-test/<timestamp>-<uuid>` so parallel runs do not clash.
-  - You can override the MQTT topic prefix via `MQTT_TOPIC_PREFIX` and telemetry freshness threshold via `STALE_TELEMETRY_THRESHOLD_SECONDS` if needed.
+  - You can override the MQTT topic prefix via `MQTT_TOPIC_PREFIX` and telemetry freshness threshold via `TELEMETRY_STALE_MS` if needed.
 
 ## Performance notes
 - Dashboard polling now uses a longer, jittered interval with visibility-aware backoff to avoid hogging CPU when the tab is hidden.
