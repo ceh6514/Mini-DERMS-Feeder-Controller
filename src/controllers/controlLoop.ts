@@ -28,6 +28,8 @@ import { getSafetyPolicy, TelemetryMissingBehavior } from '../safetyPolicy';
 import {
   getControlStatus,
   getLastCommand,
+  getMqttBreakerState,
+  noteMqttFailure,
   recordCommand,
   recordFailure,
   recordSuccess,
@@ -367,6 +369,31 @@ async function publishCommands(
   if (commands.length === 0)
     return { attempted: 0, success: 0, failed: 0, failures: [] };
 
+  const breakerState = getMqttBreakerState(nowMs);
+  if (breakerState.reopened) {
+    logger.info('[controlLoop] MQTT publish breaker recovered; resuming publishes');
+  }
+
+  if (breakerState.blocked) {
+    console.warn(
+      `[controlLoop] MQTT publish breaker open; skipping publishes until ${new Date(
+        breakerState.retryAt ?? nowMs,
+      ).toISOString()} (${logContext})`,
+    );
+    const policy = getSafetyPolicy();
+    recordFailure(policy, 'mqtt', 'mqtt_breaker_open');
+    return {
+      attempted: 0,
+      success: 0,
+      failed: commands.length,
+      failures: commands.map((cmd) => ({
+        deviceId: cmd.deviceId,
+        deviceType: cmd.deviceType,
+        reason: 'breaker_open',
+      })),
+    };
+  }
+
   if (!mqttClient || !mqttClient.connected) {
     console.warn(
       `[controlLoop] MQTT not connected, skipping publish this tick (${logContext})`
@@ -435,7 +462,7 @@ async function publishCommands(
         incrementCounter('derms_mqtt_publish_fail_total', {
           device_id: cmd.deviceId,
         });
-        recordFailure(policy, 'mqtt', 'mqtt_publish_failure');
+        noteMqttFailure(policy, 'mqtt_publish_failure', nowMs);
         logger.error(
           { deviceId: cmd.deviceId, err: lastError as Record<string, unknown> },
           '[controlLoop] failed to publish command',
@@ -1059,7 +1086,6 @@ export async function runControlLoopCycle(
         },
       });
     }
-    recordSuccess();
   } catch (err) {
     errored = true;
     recordFailure(getSafetyPolicy(), 'db', 'loop_error');
@@ -1068,8 +1094,13 @@ export async function runControlLoopCycle(
     incrementCounter('derms_control_cycle_errors_total', { stage: 'compute' });
     incrementCounter('derms_db_error_total', { operation: 'read' });
   } finally {
-    if (!errored) {
+    if (!errored && publishFailed === 0) {
+      recordSuccess();
+    }
+    if (!errored && publishFailed === 0) {
       markIterationSuccess(Date.now());
+    } else if (!errored && publishFailed > 0) {
+      markIterationDegraded('mqtt_publish_failure', Date.now());
     }
     const finishedAtMs = Date.now();
     setGaugeValue('derms_devices_seen', devicesSeen);

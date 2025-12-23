@@ -12,6 +12,8 @@ export interface SafetyPolicy {
   mqttPublishTimeoutMs: number;
   mqttMaxRetries: number;
   mqttRetryBackoffMs: number;
+  mqttBreakerThreshold: number;
+  mqttBreakerCooldownMs: number;
   dbQueryTimeoutMs: number;
   dbErrorBehavior: DbErrorBehavior;
   maxConsecutiveFailures: number;
@@ -46,6 +48,8 @@ export function getSafetyPolicy(): SafetyPolicy {
     mqttPublishTimeoutMs: Number(process.env.MQTT_PUBLISH_TIMEOUT_MS ?? 2_000),
     mqttMaxRetries: Number(process.env.MQTT_MAX_RETRIES ?? 3),
     mqttRetryBackoffMs: Number(process.env.MQTT_RETRY_BACKOFF_MS ?? 200),
+    mqttBreakerThreshold: Number(process.env.MQTT_BREAKER_THRESHOLD ?? 3),
+    mqttBreakerCooldownMs: Number(process.env.MQTT_BREAKER_COOLDOWN_MS ?? 15_000),
     dbQueryTimeoutMs: Number(process.env.DB_QUERY_TIMEOUT_MS ?? 2_000),
     dbErrorBehavior: parseDbErrorBehavior(process.env.DB_ERROR_BEHAVIOR),
     maxConsecutiveFailures: Number(process.env.MAX_CONSECUTIVE_FAILURES ?? 5),
@@ -59,4 +63,3 @@ export function getSafetyPolicy(): SafetyPolicy {
 export function resetSafetyPolicyCache() {
   cachedPolicy = null;
 }
-
