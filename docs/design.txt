@@ -99,7 +99,7 @@ Responsibilities:
 
 Load configuration (config.ts).
 
-Initialize database schema (initSchema from db.ts).
+Initialize database schema via the migration runner (runMigrations/initSchema in db.ts).
 
 Start MQTT client (startMqttClient), non-blocking.
 

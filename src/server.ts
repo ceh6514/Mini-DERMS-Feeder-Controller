@@ -69,9 +69,15 @@ export async function startServer(
   rebuildPool();
   logger.info('[startup] initSchema starting');
   setDbReady(false, 'initializing');
-  await initSchema();
-  setDbReady(true);
-  logger.info('[startup] initSchema done');
+  try {
+    await initSchema();
+    setDbReady(true);
+    logger.info('[startup] initSchema done');
+  } catch (err) {
+    setDbReady(false, 'migration_failed');
+    logger.error({ err }, '[startup] migrations failed');
+    throw err;
+  }
 
   try {
     logger.info('[startup] starting MQTT client');
