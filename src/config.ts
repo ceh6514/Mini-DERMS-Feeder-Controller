@@ -65,6 +65,8 @@ export interface Config {
   auth: {
     jwtSecret: string;
     tokenTtlHours: number;
+    issuer: string;
+    audience: string;
     users: {
       username: string;
       passwordHash: string;
@@ -89,8 +91,7 @@ function validateSecret(name: string, value: string | undefined, minLength = 24)
   return value;
 }
 
-function parseUsers(): Config['auth']['users'] {
-  const raw = process.env.AUTH_USERS;
+export function parseAuthUsers(raw = process.env.AUTH_USERS): Config['auth']['users'] {
   if (!raw) {
     throw new Error(
       '[config] AUTH_USERS is required. Inject a JSON array of users via environment variable or secret manager.',
@@ -120,7 +121,7 @@ function parseUsers(): Config['auth']['users'] {
 
     if (password) {
       throw new Error(
-        `[config] AUTH_USERS[${idx}] must provide passwordHash (bcrypt) instead of plaintext password`,
+        `[config] AUTH_USERS[${idx}] must provide passwordHash (scrypt:<salt>:<derivedKey>) instead of plaintext password`,
       );
     }
 
@@ -133,7 +134,9 @@ function parseUsers(): Config['auth']['users'] {
     }
 
     if (!isValidPasswordHash(passwordHash)) {
-      throw new Error(`[config] AUTH_USERS[${idx}].passwordHash must be a valid bcrypt hash`);
+      throw new Error(
+        `[config] AUTH_USERS[${idx}].passwordHash must be a valid scrypt hash (scrypt:<salt>:<derivedKey>)`,
+      );
     }
 
     return {
@@ -201,7 +204,9 @@ const config: Config = {
   auth: {
     jwtSecret: validateSecret('JWT_SECRET', process.env.JWT_SECRET),
     tokenTtlHours: Number(process.env.JWT_TOKEN_TTL_HOURS ?? 12),
-    users: parseUsers(),
+    issuer: process.env.JWT_ISSUER ?? 'mini-derms-feeder-controller',
+    audience: process.env.JWT_AUDIENCE ?? 'mini-derms-feeder-api',
+    users: parseAuthUsers(),
   },
 };
 

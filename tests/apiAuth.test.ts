@@ -36,15 +36,7 @@ function base64url(input: Buffer | string): string {
     : Buffer.from(input).toString('base64url');
 }
 
-function buildExpiredToken(username = 'viewer') {
-  const header = { alg: 'HS256', typ: 'JWT' };
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const payload = {
-    username,
-    role: 'viewer',
-    iat: nowSeconds - 7200,
-    exp: nowSeconds - 3600,
-  };
+function signRawToken(header: Record<string, unknown>, payload: Record<string, unknown>) {
   const encodedHeader = base64url(JSON.stringify(header));
   const encodedPayload = base64url(JSON.stringify(payload));
   const signingInput = `${encodedHeader}.${encodedPayload}`;
@@ -54,6 +46,54 @@ function buildExpiredToken(username = 'viewer') {
     .digest('base64url');
 
   return `${signingInput}.${signature}`;
+}
+
+function buildExpiredToken(username = 'viewer') {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const payload = buildPayload({
+    username,
+    iatOffsetSeconds: -7200,
+    expOffsetSeconds: -3600,
+  });
+  return signRawToken(header, payload);
+}
+
+function buildPayload({
+  username = 'viewer',
+  role = 'viewer',
+  iatOffsetSeconds = 0,
+  expOffsetSeconds = config.auth.tokenTtlHours * 60 * 60,
+  issuer = config.auth.issuer,
+  audience = config.auth.audience,
+}: {
+  username?: string;
+  role?: string;
+  iatOffsetSeconds?: number;
+  expOffsetSeconds?: number;
+  issuer?: string;
+  audience?: string;
+}) {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  return {
+    username,
+    role,
+    iat: nowSeconds + iatOffsetSeconds,
+    exp: nowSeconds + expOffsetSeconds,
+    iss: issuer,
+    aud: audience,
+  };
+}
+
+function buildBadAlgToken() {
+  const header = { alg: 'HS512', typ: 'JWT' };
+  const payload = buildPayload({});
+  return signRawToken(header, payload);
+}
+
+function buildBadIssuerToken() {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const payload = buildPayload({ issuer: 'unexpected-issuer' });
+  return signRawToken(header, payload);
 }
 
 function getOperatorCreds() {
@@ -195,6 +235,32 @@ describe('API authentication and routing', () => {
         headers: { Authorization: 'Bearer not-a-token' },
       });
       assert.strictEqual(malformedResp.status, 401);
+    } finally {
+      await close();
+    }
+  });
+
+  it('rejects JWTs with unsupported alg header', async () => {
+    const { baseUrl, close } = await startServer();
+    try {
+      const badAlgToken = buildBadAlgToken();
+      const resp = await fetch(`${baseUrl}/api/feeder/summary`, {
+        headers: { Authorization: `Bearer ${badAlgToken}` },
+      });
+      assert.strictEqual(resp.status, 401);
+    } finally {
+      await close();
+    }
+  });
+
+  it('rejects JWTs with mismatched issuer', async () => {
+    const { baseUrl, close } = await startServer();
+    try {
+      const badIssuer = buildBadIssuerToken();
+      const resp = await fetch(`${baseUrl}/api/feeder/summary`, {
+        headers: { Authorization: `Bearer ${badIssuer}` },
+      });
+      assert.strictEqual(resp.status, 401);
     } finally {
       await close();
     }
