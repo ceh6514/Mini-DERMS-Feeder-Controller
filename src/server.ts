@@ -24,6 +24,7 @@ import {
   renderPrometheus,
   shouldExposePrometheus,
 } from './observability/metrics';
+import { getReadiness, setDbReady } from './state/readiness';
 
 const swaggerHtml = `<!DOCTYPE html>
 <html>
@@ -67,7 +68,9 @@ export async function startServer(
 ): Promise<StartedServer> {
   rebuildPool();
   logger.info('[startup] initSchema starting');
+  setDbReady(false, 'initializing');
   await initSchema();
+  setDbReady(true);
   logger.info('[startup] initSchema done');
 
   try {
@@ -105,10 +108,14 @@ export async function startServer(
 
     const controlLoop = getControlLoopState();
     const offlineCount = controlLoop.offlineDevices.length;
+    const readiness = getReadiness();
+    const ready = readiness.dbReady && readiness.mqttReady;
     const healthyLoop =
-      controlLoop.status !== 'error' && controlLoop.status !== 'stalled';
+      controlLoop.status !== 'error' &&
+      controlLoop.status !== 'stalled' &&
+      controlLoop.status !== 'degraded';
     const overallStatus =
-      dbOk && offlineCount === 0 && healthyLoop ? 'ok' : 'degraded';
+      dbOk && ready && offlineCount === 0 && healthyLoop ? 'ok' : 'degraded';
 
     res.json({
       status: overallStatus,

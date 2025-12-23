@@ -24,7 +24,7 @@ export function resetSafetyState(): void {
 
 export function recordFailure(policy: SafetyPolicy, subsystem: Subsystem, reason: string): void {
   consecutiveFailures += 1;
-  degradedReason = subsystem;
+  degradedReason = reason ? `${subsystem}:${reason}` : subsystem;
   if (consecutiveFailures >= policy.maxConsecutiveFailures) {
     stoppedReason = reason;
   }
@@ -48,4 +48,3 @@ export function canResumeControl(policy: SafetyPolicy): boolean {
   if (!stoppedReason) return true;
   return consecutiveFailures < policy.maxConsecutiveFailures;
 }
-

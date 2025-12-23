@@ -182,12 +182,13 @@ export interface OfflineDeviceSummary {
 }
 
 export interface ControlLoopStatus {
-  status: 'idle' | 'ok' | 'error' | 'stalled';
+  status: 'idle' | 'ok' | 'error' | 'stalled' | 'degraded';
   lastIterationIso: string | null;
   lastDurationMs: number | null;
   lastError: string | null;
   offlineDevices: OfflineDeviceSummary[];
   offlineCount: number;
+  degradedReason: string | null;
   heartbeatTimeoutSeconds: number;
   stallThresholdSeconds: number;
 }

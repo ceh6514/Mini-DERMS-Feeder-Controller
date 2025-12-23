@@ -44,6 +44,7 @@ export const openApiSpec = {
                         },
                         lastDurationMs: { type: 'number', nullable: true },
                         lastError: { type: 'string', nullable: true },
+                        degradedReason: { type: 'string', nullable: true },
                         offlineCount: { type: 'number' },
                         offlineDevices: {
                           type: 'array',

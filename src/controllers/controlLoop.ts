@@ -11,6 +11,7 @@ import { buildSetpointMessage } from '../messaging/setpointBuilder';
 import {
   getOfflineDeviceIds,
   markIterationError,
+  markIterationDegraded,
   markIterationStart,
   markIterationSuccess,
   shouldAlertOffline,
@@ -39,6 +40,7 @@ import {
 } from '../observability/metrics';
 import { DecisionRecordBuilder, DeviceDecisionRecord } from '../observability/decisionRecord';
 import logger from '../logger';
+import { getReadiness } from '../state/readiness';
 
 // Track the most recent setpoint we have commanded for each device.
 export const deviceSetpoints = new Map<string, number>();
@@ -971,6 +973,35 @@ export async function runControlLoopCycle(
   }
 
   markIterationStart(nowMs);
+
+  const readiness = getReadiness();
+  if (!readiness.dbReady || !readiness.mqttReady) {
+    const reason = !readiness.dbReady
+      ? readiness.dbReason ?? 'db_not_ready'
+      : readiness.mqttReason ?? 'mqtt_not_ready';
+    recordFailure(getSafetyPolicy(), readiness.dbReady ? 'mqtt' : 'db', reason);
+    markIterationDegraded(reason, nowMs);
+    setGaugeValue('derms_control_cycle_inflight', 0);
+    const statusSnapshot = getControlStatus();
+    setGauge(
+      'derms_control_degraded',
+      statusSnapshot.degradedReason ? 1 : 0,
+      { reason: statusSnapshot.degradedReason ?? 'none' },
+    );
+    setGauge(
+      'derms_control_stopped',
+      statusSnapshot.stoppedReason ? 1 : 0,
+      { reason: statusSnapshot.stoppedReason ?? 'none' },
+    );
+    const offlineSnapshot = getOfflineDeviceIds(nowMs);
+    return {
+      offlineDevices: [...offlineSnapshot],
+      commandsPublished: 0,
+      staleTelemetryDropped: 0,
+      timestampIso: new Date(nowMs).toISOString(),
+    };
+  }
+
   let errored = false;
   let commandsPublished = 0;
   let staleTelemetryDropped = 0;
