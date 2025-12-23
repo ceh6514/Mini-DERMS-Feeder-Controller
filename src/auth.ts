@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { NextFunction, Request, Response, Router } from 'express';
 import config from './config';
 import { verifyPassword } from './security/passwords';
+import logger from './logger';
 
 export type UserRole = 'viewer' | 'operator' | 'admin';
 
@@ -76,7 +77,7 @@ function verifyToken(token: string): TokenPayload | null {
     }
     return payload;
   } catch (err) {
-    console.error('[auth] failed to parse token payload', err);
+    logger.error(err as Error, '[auth] failed to parse token payload');
     return null;
   }
 }
