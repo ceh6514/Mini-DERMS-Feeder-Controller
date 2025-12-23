@@ -11,6 +11,7 @@ import { buildSetpointMessage } from '../messaging/setpointBuilder';
 import {
   getOfflineDeviceIds,
   markIterationError,
+  markIterationDegraded,
   markIterationStart,
   markIterationSuccess,
   shouldAlertOffline,
@@ -27,6 +28,8 @@ import { getSafetyPolicy, TelemetryMissingBehavior } from '../safetyPolicy';
 import {
   getControlStatus,
   getLastCommand,
+  getMqttBreakerState,
+  noteMqttFailure,
   recordCommand,
   recordFailure,
   recordSuccess,
@@ -39,6 +42,7 @@ import {
 } from '../observability/metrics';
 import { DecisionRecordBuilder, DeviceDecisionRecord } from '../observability/decisionRecord';
 import logger from '../logger';
+import { getReadiness } from '../state/readiness';
 
 // Track the most recent setpoint we have commanded for each device.
 export const deviceSetpoints = new Map<string, number>();
@@ -171,6 +175,7 @@ export function computeAllowedShares(
   }
 
   const getWeight = (ev: DeviceWithTelemetry) => {
+    // Weighting favors under-served, higher-priority devices while guarding reserve SOC.
     const priorityWeight = params.respectPriority
       ? Math.max(ev.priority, 1) * 1.25
       : Math.max(ev.priority, 1);
@@ -199,6 +204,7 @@ export function computeAllowedShares(
   for (const ev of evDevices) {
     const weight = weights.get(ev.id) ?? 0;
     const existing = deviceDeficits.get(ev.id) ?? 0;
+    // Deficit accumulator smooths swings between ticks and rewards devices left behind last cycle.
     deviceDeficits.set(ev.id, existing + weight * quantumPerWeight);
   }
 
@@ -365,6 +371,31 @@ async function publishCommands(
   if (commands.length === 0)
     return { attempted: 0, success: 0, failed: 0, failures: [] };
 
+  const breakerState = getMqttBreakerState(nowMs);
+  if (breakerState.reopened) {
+    logger.info('[controlLoop] MQTT publish breaker recovered; resuming publishes');
+  }
+
+  if (breakerState.blocked) {
+    console.warn(
+      `[controlLoop] MQTT publish breaker open; skipping publishes until ${new Date(
+        breakerState.retryAt ?? nowMs,
+      ).toISOString()} (${logContext})`,
+    );
+    const policy = getSafetyPolicy();
+    recordFailure(policy, 'mqtt', 'mqtt_breaker_open');
+    return {
+      attempted: 0,
+      success: 0,
+      failed: commands.length,
+      failures: commands.map((cmd) => ({
+        deviceId: cmd.deviceId,
+        deviceType: cmd.deviceType,
+        reason: 'breaker_open',
+      })),
+    };
+  }
+
   if (!mqttClient || !mqttClient.connected) {
     console.warn(
       `[controlLoop] MQTT not connected, skipping publish this tick (${logContext})`
@@ -433,7 +464,7 @@ async function publishCommands(
         incrementCounter('derms_mqtt_publish_fail_total', {
           device_id: cmd.deviceId,
         });
-        recordFailure(policy, 'mqtt', 'mqtt_publish_failure');
+        noteMqttFailure(policy, 'mqtt_publish_failure', nowMs);
         logger.error(
           { deviceId: cmd.deviceId, err: lastError as Record<string, unknown> },
           '[controlLoop] failed to publish command',
@@ -971,6 +1002,35 @@ export async function runControlLoopCycle(
   }
 
   markIterationStart(nowMs);
+
+  const readiness = getReadiness();
+  if (!readiness.dbReady || !readiness.mqttReady) {
+    const reason = !readiness.dbReady
+      ? readiness.dbReason ?? 'db_not_ready'
+      : readiness.mqttReason ?? 'mqtt_not_ready';
+    recordFailure(getSafetyPolicy(), readiness.dbReady ? 'mqtt' : 'db', reason);
+    markIterationDegraded(reason, nowMs);
+    setGaugeValue('derms_control_cycle_inflight', 0);
+    const statusSnapshot = getControlStatus();
+    setGauge(
+      'derms_control_degraded',
+      statusSnapshot.degradedReason ? 1 : 0,
+      { reason: statusSnapshot.degradedReason ?? 'none' },
+    );
+    setGauge(
+      'derms_control_stopped',
+      statusSnapshot.stoppedReason ? 1 : 0,
+      { reason: statusSnapshot.stoppedReason ?? 'none' },
+    );
+    const offlineSnapshot = getOfflineDeviceIds(nowMs);
+    return {
+      offlineDevices: [...offlineSnapshot],
+      commandsPublished: 0,
+      staleTelemetryDropped: 0,
+      timestampIso: new Date(nowMs).toISOString(),
+    };
+  }
+
   let errored = false;
   let commandsPublished = 0;
   let staleTelemetryDropped = 0;
@@ -1028,7 +1088,6 @@ export async function runControlLoopCycle(
         },
       });
     }
-    recordSuccess();
   } catch (err) {
     errored = true;
     recordFailure(getSafetyPolicy(), 'db', 'loop_error');
@@ -1037,8 +1096,13 @@ export async function runControlLoopCycle(
     incrementCounter('derms_control_cycle_errors_total', { stage: 'compute' });
     incrementCounter('derms_db_error_total', { operation: 'read' });
   } finally {
-    if (!errored) {
+    if (!errored && publishFailed === 0) {
+      recordSuccess();
+    }
+    if (!errored && publishFailed === 0) {
       markIterationSuccess(Date.now());
+    } else if (!errored && publishFailed > 0) {
+      markIterationDegraded('mqtt_publish_failure', Date.now());
     }
     const finishedAtMs = Date.now();
     setGaugeValue('derms_devices_seen', devicesSeen);

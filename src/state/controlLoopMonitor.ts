@@ -1,6 +1,6 @@
 import config from '../config';
 
-type ControlLoopStatus = 'idle' | 'ok' | 'error' | 'stalled';
+type ControlLoopStatus = 'idle' | 'ok' | 'error' | 'stalled' | 'degraded';
 
 export interface OfflineDeviceInfo {
   deviceId: string;
@@ -13,6 +13,7 @@ export interface ControlLoopStateSnapshot {
   lastDurationMs: number | null;
   lastError: string | null;
   offlineDevices: OfflineDeviceInfo[];
+  degradedReason: string | null;
   heartbeatTimeoutSeconds: number;
   stallThresholdSeconds: number;
 }
@@ -59,6 +60,14 @@ export function markIterationError(err: unknown, atMs = Date.now()): void {
   lastIterationError = err instanceof Error ? err.message : String(err);
 }
 
+export function markIterationDegraded(reason: string, atMs = Date.now()): void {
+  lastIterationCompletedAt = atMs;
+  lastIterationDurationMs =
+    lastIterationStartedAt !== null ? atMs - lastIterationStartedAt : null;
+  lastIterationStatus = 'degraded';
+  lastIterationError = reason;
+}
+
 function getOfflineDevicesInternal(nowMs: number): OfflineDeviceInfo[] {
   const offline: OfflineDeviceInfo[] = [];
 
@@ -99,6 +108,7 @@ export function getControlLoopState(nowMs = Date.now()): ControlLoopStateSnapsho
     lastDurationMs: lastIterationDurationMs,
     lastError: lastIterationError,
     offlineDevices,
+    degradedReason: status === 'degraded' ? lastIterationError : null,
     heartbeatTimeoutSeconds: heartbeatTimeoutMs / 1000,
     stallThresholdSeconds: stallThresholdMs / 1000,
   };

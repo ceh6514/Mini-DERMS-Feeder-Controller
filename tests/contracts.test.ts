@@ -64,6 +64,53 @@ describe('contract validation and idempotency', () => {
     assert.equal(second.status, 'duplicate');
   });
 
+  it('flushes telemetry batches with backpressure-aware queue', async () => {
+    const batches: any[][] = [];
+    handler = new TelemetryHandler(
+      {
+        saveBatch: async (rows) => {
+          batches.push(rows);
+          return rows.map(() => 'inserted');
+        },
+        save: async (row) => {
+          saved.push(row);
+          return 'inserted';
+        },
+      },
+      { batchSize: 2, flushIntervalMs: 0, maxQueueSize: 10 },
+    );
+
+    const now = Date.now();
+    const results = await Promise.all([
+      handler.handle(sampleTelemetry(now, '11111111-1111-4111-8111-111111111114')),
+      handler.handle(sampleTelemetry(now + 1, '11111111-1111-4111-8111-111111111115')),
+    ]);
+
+    assert.equal(results.length, 2);
+    assert.equal(batches.length, 1);
+    assert.equal(batches[0].length, 2);
+  });
+
+  it('rejects telemetry when the queue is full', async () => {
+    handler = new TelemetryHandler(
+      {
+        save: async (row) => {
+          saved.push(row);
+          return 'inserted';
+        },
+      },
+      { batchSize: 5, flushIntervalMs: 100, maxQueueSize: 1 },
+    );
+
+    const now = Date.now();
+    const first = handler.handle(sampleTelemetry(now, '11111111-1111-4111-8111-111111111116'));
+    await assert.rejects(
+      () => handler.handle(sampleTelemetry(now + 1, '11111111-1111-4111-8111-111111111117')),
+      /backpressure/,
+    );
+    await first;
+  });
+
   it('tracks out of order samples', async () => {
     const newerTs = Date.now();
     const olderTs = newerTs - 10_000;

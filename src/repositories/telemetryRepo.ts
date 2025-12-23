@@ -165,6 +165,87 @@ export async function insertTelemetry(row: TelemetryRow): Promise<'inserted' | '
   }
 }
 
+export async function insertTelemetryBatch(
+  rows: TelemetryRow[],
+): Promise<Array<'inserted' | 'duplicate'>> {
+  if (rows.length === 0) return [];
+  const feederIds = rows.map((row) => normalizeFeederId(row.feeder_id));
+  const columns = [
+    'message_id',
+    'message_version',
+    'message_type',
+    'sent_at',
+    'source',
+    'device_id',
+    'ts',
+    'type',
+    'p_actual_kw',
+    'p_setpoint_kw',
+    'soc',
+    'site_id',
+    'feeder_id',
+    'cloud_cover_pct',
+    'shortwave_radiation_wm2',
+    'estimated_power_w',
+  ];
+
+  const values: any[] = [];
+  const tuples = rows
+    .map((row, idx) => {
+      const base = idx * columns.length;
+      values.push(
+        row.message_id ?? null,
+        row.message_version ?? 1,
+        row.message_type ?? 'telemetry',
+        row.sent_at ?? null,
+        row.source ?? null,
+        row.device_id,
+        row.ts,
+        row.type,
+        row.p_actual_kw,
+        row.p_setpoint_kw ?? null,
+        row.soc ?? null,
+        row.site_id,
+        feederIds[idx],
+        row.cloud_cover_pct ?? 0,
+        row.shortwave_radiation_wm2 ?? 0,
+        row.estimated_power_w ?? 0,
+      );
+
+      const placeholders = columns.map((_, colIdx) => `$${base + colIdx + 1}`).join(', ');
+      return `(${placeholders})`;
+    })
+    .join(', ');
+
+  const text = `
+    WITH input_rows (${columns.join(', ')}) AS (
+      VALUES ${tuples}
+    )
+    INSERT INTO telemetry (${columns.join(', ')})
+    SELECT ${columns.join(', ')} FROM input_rows
+    ON CONFLICT ON CONSTRAINT telemetry_device_ts_type_key DO UPDATE
+    SET
+      message_id = EXCLUDED.message_id,
+      message_version = EXCLUDED.message_version,
+      message_type = EXCLUDED.message_type,
+      sent_at = EXCLUDED.sent_at,
+      source = EXCLUDED.source,
+      type = EXCLUDED.type,
+      p_actual_kw = EXCLUDED.p_actual_kw,
+      p_setpoint_kw = EXCLUDED.p_setpoint_kw,
+      soc = EXCLUDED.soc,
+      site_id = EXCLUDED.site_id,
+      feeder_id = EXCLUDED.feeder_id,
+      cloud_cover_pct = EXCLUDED.cloud_cover_pct,
+      shortwave_radiation_wm2 = EXCLUDED.shortwave_radiation_wm2,
+      estimated_power_w = EXCLUDED.estimated_power_w
+    RETURNING xmax = 0 AS inserted;
+  `;
+
+  const { rows: result } = await query<{ inserted: boolean }>(text, values);
+  return result.map((row) => (row.inserted ? 'inserted' : 'duplicate'));
+}
+
 export async function getLatestTelemetryPerDevice(feederId?: string): Promise<TelemetryRow[]> {
   const resolvedFeeder = normalizeFeederId(feederId);
   const text = `

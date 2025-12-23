@@ -3,7 +3,7 @@ import cors from 'cors';
 import fs from 'fs';
 import http from 'http';
 import https from 'https';
-import config from './config';
+import config, { getAuthConfigStatus } from './config';
 import { initSchema, pool, rebuildPool } from './db';
 import { getMqttStatus, startMqttClient, stopMqttClient } from './mqttClient';
 import { startControlLoop } from './controllers/controlLoop';
@@ -17,6 +17,7 @@ import drProgramsRouter from './routes/drPrograms';
 import metricsRouter from './routes/metrics';
 import { authRouter, requireAuth } from './auth';
 import logger from './logger';
+import { getMigrationState } from './migrations';
 import {
   collectHealthMetrics,
   metricsContentType,
@@ -24,6 +25,7 @@ import {
   renderPrometheus,
   shouldExposePrometheus,
 } from './observability/metrics';
+import { getReadiness, setDbReady } from './state/readiness';
 
 const swaggerHtml = `<!DOCTYPE html>
 <html>
@@ -67,8 +69,16 @@ export async function startServer(
 ): Promise<StartedServer> {
   rebuildPool();
   logger.info('[startup] initSchema starting');
-  await initSchema();
-  logger.info('[startup] initSchema done');
+  setDbReady(false, 'initializing');
+  try {
+    await initSchema();
+    setDbReady(true);
+    logger.info('[startup] initSchema done');
+  } catch (err) {
+    setDbReady(false, 'migration_failed');
+    logger.error({ err }, '[startup] migrations failed');
+    throw err;
+  }
 
   try {
     logger.info('[startup] starting MQTT client');
@@ -79,8 +89,20 @@ export async function startServer(
   }
 
   const app = express();
-  app.use(cors());
-  app.use(express.json());
+
+  const allowedOrigins = new Set(config.ingress.corsAllowedOrigins);
+  const corsOptions = {
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.has(origin)) return callback(null, true);
+      return callback(null, false);
+    },
+    optionsSuccessStatus: 204,
+  };
+
+  app.use(cors(corsOptions));
+  app.options('*', cors(corsOptions));
+  app.use(express.json({ limit: config.ingress.jsonBodyLimit }));
 
   app.get('/api/health', async (_req, res) => {
     let dbOk = true;
@@ -93,14 +115,24 @@ export async function startServer(
 
     const controlLoop = getControlLoopState();
     const offlineCount = controlLoop.offlineDevices.length;
+    const readiness = getReadiness();
+    const ready = readiness.dbReady && readiness.mqttReady;
+    const migrationState = await getMigrationState({ client: pool });
+    const authStatus = getAuthConfigStatus();
     const healthyLoop =
-      controlLoop.status !== 'error' && controlLoop.status !== 'stalled';
+      controlLoop.status !== 'error' &&
+      controlLoop.status !== 'stalled' &&
+      controlLoop.status !== 'degraded';
     const overallStatus =
-      dbOk && offlineCount === 0 && healthyLoop ? 'ok' : 'degraded';
+      dbOk && ready && offlineCount === 0 && healthyLoop && migrationState.ok && authStatus.ok
+        ? 'ok'
+        : 'degraded';
 
     res.json({
       status: overallStatus,
       db: { ok: dbOk },
+      migrations: migrationState,
+      auth: authStatus,
       mqtt: getMqttStatus(),
       controlLoop: {
         ...controlLoop,

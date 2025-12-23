@@ -33,6 +33,24 @@ export const openApiSpec = {
                         lastError: { type: 'string', nullable: true },
                       },
                     },
+                    auth: {
+                      type: 'object',
+                      properties: {
+                        ok: { type: 'boolean' },
+                        userCount: { type: 'integer' },
+                        issues: { type: 'array', items: { type: 'string' } },
+                      },
+                    },
+                    migrations: {
+                      type: 'object',
+                      properties: {
+                        ok: { type: 'boolean' },
+                        latest: { type: 'string', nullable: true },
+                        applied: { type: 'array', items: { type: 'string' } },
+                        pending: { type: 'array', items: { type: 'string' } },
+                        error: { type: 'string', nullable: true },
+                      },
+                    },
                     controlLoop: {
                       type: 'object',
                       properties: {
@@ -44,6 +62,7 @@ export const openApiSpec = {
                         },
                         lastDurationMs: { type: 'number', nullable: true },
                         lastError: { type: 'string', nullable: true },
+                        degradedReason: { type: 'string', nullable: true },
                         offlineCount: { type: 'number' },
                         offlineDevices: {
                           type: 'array',

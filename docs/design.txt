@@ -40,6 +40,9 @@ Database: PostgreSQL with three main tables (devices, telemetry, events).
 
 Frontend: React + TypeScript + Vite.
 
+Authentication defaults:
+- `.env.example` ships with scrypt-hashed local credentials for `admin`, `operator`, and `viewer` so a new developer can start the stack immediately. Regenerate hashes with `npm run auth:hash <password>` before rotating or replacing those users in any shared environment. Secrets (JWT and AUTH_USERS) must still be injected via env/secret manager for real deployments.
+
 Data & Control Flow
 
 Simulator / Pi agents → MQTT
@@ -99,7 +102,7 @@ Responsibilities:
 
 Load configuration (config.ts).
 
-Initialize database schema (initSchema from db.ts).
+Initialize database schema via the migration runner (runMigrations/initSchema in db.ts).
 
 Start MQTT client (startMqttClient), non-blocking.
 

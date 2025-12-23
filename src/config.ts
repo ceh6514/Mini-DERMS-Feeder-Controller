@@ -29,12 +29,23 @@ export interface MqttConfig {
   topicPrefix: string;
 }
 
+export interface TelemetryIngestConfig {
+  batchSize: number;
+  flushIntervalMs: number;
+  maxQueueSize: number;
+}
+
 export interface Config {
   port: number;
   logLevel: string;
   logPretty: boolean;
+  ingress: {
+    corsAllowedOrigins: string[];
+    jsonBodyLimit: string;
+  };
   db: DbConfig;
   mqtt: MqttConfig;
+  telemetryIngest: TelemetryIngestConfig;
   tls: {
     enabled: boolean;
     keyPath?: string;
@@ -65,6 +76,8 @@ export interface Config {
   auth: {
     jwtSecret: string;
     tokenTtlHours: number;
+    issuer: string;
+    audience: string;
     users: {
       username: string;
       passwordHash: string;
@@ -89,8 +102,15 @@ function validateSecret(name: string, value: string | undefined, minLength = 24)
   return value;
 }
 
-function parseUsers(): Config['auth']['users'] {
-  const raw = process.env.AUTH_USERS;
+function parsePositiveInt(raw: string | undefined, fallback: number, label: string): number {
+  const parsed = Number(raw ?? fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`[config] ${label} must be a positive number`);
+  }
+  return parsed;
+}
+
+export function parseAuthUsers(raw = process.env.AUTH_USERS): Config['auth']['users'] {
   if (!raw) {
     throw new Error(
       '[config] AUTH_USERS is required. Inject a JSON array of users via environment variable or secret manager.',
@@ -120,7 +140,7 @@ function parseUsers(): Config['auth']['users'] {
 
     if (password) {
       throw new Error(
-        `[config] AUTH_USERS[${idx}] must provide passwordHash (bcrypt) instead of plaintext password`,
+        `[config] AUTH_USERS[${idx}] must provide passwordHash (scrypt:<salt>:<derivedKey>) instead of plaintext password`,
       );
     }
 
@@ -133,7 +153,9 @@ function parseUsers(): Config['auth']['users'] {
     }
 
     if (!isValidPasswordHash(passwordHash)) {
-      throw new Error(`[config] AUTH_USERS[${idx}].passwordHash must be a valid bcrypt hash`);
+      throw new Error(
+        `[config] AUTH_USERS[${idx}].passwordHash must be a valid scrypt hash (scrypt:<salt>:<derivedKey>)`,
+      );
     }
 
     return {
@@ -148,6 +170,13 @@ const config: Config = {
   port: Number(process.env.PORT ?? 3001),
   logLevel: process.env.LOG_LEVEL ?? 'info',
   logPretty: (process.env.LOG_PRETTY ?? 'true').toLowerCase() === 'true',
+  ingress: {
+    corsAllowedOrigins: (process.env.CORS_ALLOWED_ORIGINS ?? 'http://localhost:3000')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
+    jsonBodyLimit: process.env.JSON_BODY_LIMIT ?? '1mb',
+  },
   db: {
     host: process.env.DB_HOST ?? 'localhost',
     port: Number(process.env.DB_PORT ?? 5432),
@@ -159,6 +188,19 @@ const config: Config = {
     host: process.env.MQTT_HOST ?? 'localhost',
     port: Number(process.env.MQTT_PORT ?? 1883),
     topicPrefix: (process.env.MQTT_TOPIC_PREFIX ?? 'der').replace(/\/$/, ''),
+  },
+  telemetryIngest: {
+    batchSize: parsePositiveInt(process.env.TELEMETRY_BATCH_SIZE, 25, 'TELEMETRY_BATCH_SIZE'),
+    flushIntervalMs: parsePositiveInt(
+      process.env.TELEMETRY_BATCH_FLUSH_MS,
+      100,
+      'TELEMETRY_BATCH_FLUSH_MS',
+    ),
+    maxQueueSize: parsePositiveInt(
+      process.env.TELEMETRY_MAX_QUEUE_SIZE,
+      2000,
+      'TELEMETRY_MAX_QUEUE_SIZE',
+    ),
   },
   tls: {
     enabled: (process.env.TLS_ENABLED ?? 'false').toLowerCase() === 'true',
@@ -201,8 +243,33 @@ const config: Config = {
   auth: {
     jwtSecret: validateSecret('JWT_SECRET', process.env.JWT_SECRET),
     tokenTtlHours: Number(process.env.JWT_TOKEN_TTL_HOURS ?? 12),
-    users: parseUsers(),
+    issuer: process.env.JWT_ISSUER ?? 'mini-derms-feeder-controller',
+    audience: process.env.JWT_AUDIENCE ?? 'mini-derms-feeder-api',
+    users: parseAuthUsers(),
   },
 };
+
+export function getAuthConfigStatus() {
+  const issues: string[] = [];
+  if (!config.auth.users.length) {
+    issues.push('No AUTH_USERS configured');
+  }
+  const invalidHashes = config.auth.users
+    .map((u) => ({ user: u.username, ok: isValidPasswordHash(u.passwordHash) }))
+    .filter((u) => !u.ok)
+    .map((u) => u.user);
+  if (invalidHashes.length > 0) {
+    issues.push(`Invalid passwordHash for: ${invalidHashes.join(', ')}`);
+  }
+  if (!config.auth.jwtSecret || config.auth.jwtSecret.length < 24) {
+    issues.push('JWT_SECRET too short');
+  }
+
+  return {
+    ok: issues.length === 0,
+    issues,
+    userCount: config.auth.users.length,
+  };
+}
 
 export default config;

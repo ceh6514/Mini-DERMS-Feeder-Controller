@@ -14,6 +14,8 @@ export interface AuthenticatedUser {
 interface TokenPayload extends AuthenticatedUser {
   exp: number;
   iat: number;
+  iss: string;
+  aud: string;
 }
 
 const roleRank: Record<UserRole, number> = {
@@ -35,6 +37,8 @@ function signToken(user: AuthenticatedUser): string {
     ...user,
     iat: nowSeconds,
     exp: nowSeconds + config.auth.tokenTtlHours * 60 * 60,
+    iss: config.auth.issuer,
+    aud: config.auth.audience,
   };
 
   const encodedHeader = base64url(JSON.stringify(header));
@@ -52,6 +56,19 @@ function verifyToken(token: string): TokenPayload | null {
   const parts = token.split('.');
   if (parts.length !== 3) return null;
   const [headerB64, payloadB64, signature] = parts;
+
+  let header: { alg?: string; typ?: string };
+  try {
+    header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf8'));
+  } catch (err) {
+    logger.error(err as Error, '[auth] failed to parse token header');
+    return null;
+  }
+
+  if (header.alg !== 'HS256' || header.typ !== 'JWT') {
+    return null;
+  }
+
   const signingInput = `${headerB64}.${payloadB64}`;
   const expectedSignature = crypto
     .createHmac('sha256', config.auth.jwtSecret)
@@ -73,6 +90,10 @@ function verifyToken(token: string): TokenPayload | null {
     const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8')) as TokenPayload;
     const nowSeconds = Math.floor(Date.now() / 1000);
     if (payload.exp < nowSeconds) {
+      return null;
+    }
+
+    if (payload.iss !== config.auth.issuer || payload.aud !== config.auth.audience) {
       return null;
     }
     return payload;

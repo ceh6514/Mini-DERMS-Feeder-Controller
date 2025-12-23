@@ -2,12 +2,13 @@ import mqtt from 'mqtt';
 type NodeMqttClient = ReturnType<typeof mqtt.connect>;
 import config from './config';
 import { upsertDevice } from './repositories/devicesRepo';
-import { insertTelemetry } from './repositories/telemetryRepo';
+import { insertTelemetry, insertTelemetryBatch } from './repositories/telemetryRepo';
 import { recordHeartbeat } from './state/controlLoopMonitor';
 import { TelemetryHandler } from './messaging/telemetryHandler';
 import { ContractValidationError } from './contracts';
 import logger from './logger';
 import { incrementCounter } from './observability/metrics';
+import { setMqttReady } from './state/readiness';
 
 export let mqttClient: NodeMqttClient | null = null;
 let lastError: string | null = null;
@@ -33,6 +34,17 @@ function getTelemetryHandler() {
           site_id: row.site_id,
           feeder_id: row.feeder_id,
         }),
+      saveBatch: (rows) =>
+        insertTelemetryBatch(
+          rows.map((row) => ({
+            ...row,
+            message_type: row.message_type,
+          })),
+        ),
+    }, {
+      batchSize: config.telemetryIngest.batchSize,
+      flushIntervalMs: config.telemetryIngest.flushIntervalMs,
+      maxQueueSize: config.telemetryIngest.maxQueueSize,
     });
   }
   return telemetryHandler;
@@ -84,6 +96,7 @@ async function parseAndStoreMessage(topic: string, payload: Buffer) {
  * is slow or down.
  */
 export async function startMqttClient(): Promise<void> {
+  setMqttReady(false, 'connecting');
   mqttClient = mqtt.connect({
     host: config.mqtt.host,
     port: config.mqtt.port,
@@ -92,6 +105,7 @@ export async function startMqttClient(): Promise<void> {
 
   mqttClient.on('connect', () => {
     lastError = null;
+    setMqttReady(true);
     logger.info('[mqttClient] connected to MQTT broker', {
       host: config.mqtt.host,
       port: config.mqtt.port,
@@ -117,15 +131,18 @@ export async function startMqttClient(): Promise<void> {
 
   mqttClient.on('error', (err: Error) => {
     lastError = err.message;
+    setMqttReady(false, err.message);
     logger.error({ err }, '[mqttClient] connection error');
     incrementCounter('derms_mqtt_disconnect_total');
   });
 
   mqttClient.on('reconnect', () => {
+    setMqttReady(false, 'reconnecting');
     logger.warn('[mqttClient] reconnecting to broker...');
   });
 
   mqttClient.on('offline', () => {
+    setMqttReady(false, 'offline');
     logger.warn('[mqttClient] broker offline or unreachable');
     incrementCounter('derms_mqtt_disconnect_total');
   });

@@ -98,7 +98,7 @@ API routes (except `/api/health` and `/api/auth/login`) are protected by a light
 
 Secrets must be injected via environment variables or a secret manager (see `.env.example` for required keys). Provide a JSON array for `AUTH_USERS` using **hashed** credentials (scrypt) and a 32+ character `JWT_SECRET`. Rotate both at least every 90 days. The frontend stores the JWT and attaches it to subsequent API calls after a successful login.
 
-- Generate hashes locally with `npm run auth:hash <password>` (uses Node's `crypto.scrypt` with timing-safe comparison) and store the output as `passwordHash` in `AUTH_USERS`.
+- Generate hashes locally with `npm run auth:hash <password>` (uses Node's `crypto.scrypt` with timing-safe comparison) and store the output as `passwordHash` in `AUTH_USERS`. The `.env.example` file ships with pre-generated hashes for local dev accounts (`admin` / `operator` / `viewer`) whose sample passwords are documented inline; swap these out for production and regenerate with the helper when rotating credentials.
 - Plaintext `password` entries are rejected at startup; only `passwordHash` is accepted for login validation.
 
 #### Secure deployment checklist (dashboard/API)
@@ -159,6 +159,7 @@ The feeder controller uses a weighted allocator in [`src/controllers/controlLoop
 - Dashboard polling now uses a longer, jittered interval with visibility-aware backoff to avoid hogging CPU when the tab is hidden.
 - Telemetry charts and device widgets use memoization and smaller data windows to reduce unnecessary re-renders.
 - Frontend API calls support abort signals to prevent overlapping requests when switching devices quickly.
+- Telemetry ingest supports optional batching/backpressure (see `TELEMETRY_BATCH_SIZE`, `TELEMETRY_BATCH_FLUSH_MS`, and `TELEMETRY_MAX_QUEUE_SIZE`) to keep database writes smooth under higher load; defaults are tuned for local/dev stacks.
 
 ## Data lifecycle
 On startup, the service initializes the `devices`, `telemetry`, `events`, and `dr_programs` tables (see `src/db.ts`). The control loop and MQTT ingest operate continuously once the server is running.
