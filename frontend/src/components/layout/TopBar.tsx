@@ -38,6 +38,7 @@ const TopBar: React.FC<TopBarProps> = ({ summary, health, theme, feeders, select
               value={selectedFeederId ?? feederOptions[0]?.feederId}
               onChange={(e) => onFeederChange(e.target.value)}
               className="pill-select"
+              aria-label="Select feeder"
             >
               {feederOptions.map((feeder) => (
                 <option key={feeder.feederId} value={feeder.feederId}>

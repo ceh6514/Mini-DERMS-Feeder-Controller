@@ -30,6 +30,9 @@ const Sidebar: React.FC<SidebarProps> = ({ active, onChange }) => {
               type="button"
               className={`nav-button ${active === item.key ? 'active' : ''}`}
               onClick={() => onChange(item.key)}
+              aria-label={`Jump to ${item.label}`}
+              aria-current={active === item.key ? 'true' : undefined}
+              aria-controls={`${item.key}-section`}
             >
               <span aria-hidden className="nav-kicker">{item.label}</span>
             </button>

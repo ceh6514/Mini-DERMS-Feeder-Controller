@@ -1,27 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import LayoutShell from '../components/layout/LayoutShell';
-import DeviceTable from '../components/devices/DeviceTable';
-import SetpointActualChart from '../components/charts/SetpointActualChart';
-import TrackingErrorChart from '../components/charts/TrackingErrorChart';
-import SocDistributionChart from '../components/charts/SocDistributionChart';
-import FeederHistoryChart from '../components/FeederHistoryChart';
 import { useDayNightTheme } from '../hooks/useDayNightTheme';
 import { useDeviceSelection } from '../hooks/useDeviceSelection';
 import { useLiveMetrics } from '../hooks/useLiveMetrics';
 import { DeviceTelemetry, FeederInfo } from '../api/types';
 import { fetchDeviceTelemetry, fetchFeeders } from '../api/client';
-import TelemetryControlPanel from '../components/TelemetryControlPanel';
 import HeroStrip from '../components/layout/HeroStrip';
 import OrganicDivider from '../components/layout/OrganicDivider';
-import EmptyState from '../components/empty/EmptyState';
-import LineIcon from '../components/icons/LineIcon';
 import { useAuth } from '../auth/AuthProvider';
+import GenerationSection from '../components/dashboard/GenerationSection';
+import ConsumptionSection from '../components/dashboard/ConsumptionSection';
+import GridHealthSection from '../components/dashboard/GridHealthSection';
+import ForecastSection from '../components/dashboard/ForecastSection';
+import DeviceDetailSection from '../components/dashboard/DeviceDetailSection';
+import ControlsSection from '../components/dashboard/ControlsSection';
 
 const Dashboard = () => {
   const theme = useDayNightTheme();
   const [feeders, setFeeders] = useState<FeederInfo[]>([]);
   const [selectedFeederId, setSelectedFeederId] = useState<string | null>(null);
-  const { summary, devices, health, history, tracking, aggregated, loading, error } = useLiveMetrics(selectedFeederId ?? undefined);
+  const [reloadToken, setReloadToken] = useState(0);
+  const { summary, devices, health, history, tracking, aggregated, loading, error } = useLiveMetrics(
+    selectedFeederId ?? undefined,
+    4000,
+    reloadToken,
+  );
   const { selectedId, setSelectedId } = useDeviceSelection(devices, tracking);
   const [deviceTelemetry, setDeviceTelemetry] = useState<DeviceTelemetry[]>([]);
   const [filter, setFilter] = useState<'all' | 'physical' | 'simulated'>('all');
@@ -84,13 +87,16 @@ const Dashboard = () => {
     return devices;
   }, [devices, filter]);
 
-  const handleNav = useCallback((key: string) => {
-    setActiveSection(key);
-    const ref = sectionRefs[key as keyof typeof sectionRefs];
-    if (ref?.current) {
-      ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  }, [sectionRefs]);
+  const handleNav = useCallback(
+    (key: string) => {
+      setActiveSection(key);
+      const ref = sectionRefs[key as keyof typeof sectionRefs];
+      if (ref?.current) {
+        ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    },
+    [sectionRefs],
+  );
 
   useEffect(() => {
     activeSectionRef.current = activeSection;
@@ -128,6 +134,8 @@ const Dashboard = () => {
 
     return () => observer.disconnect();
   }, [sectionRefs]);
+
+  const handleRetry = useCallback(() => setReloadToken((token) => token + 1), []);
   
   return (
     <LayoutShell
@@ -142,108 +150,68 @@ const Dashboard = () => {
       username={user?.username ?? 'unknown'}
       onLogout={logout}
     >
-      {error && <div className="toast">{error}</div>}
-      <div ref={heroRef} data-section="hero">
+      {error && (
+        <div className="toast" role="alert" aria-live="assertive">
+          {error}
+        </div>
+      )}
+      <div ref={heroRef} data-section="hero" id="hero-section" aria-label="Overview">
         <HeroStrip summary={summary} health={health} devices={devices} tracking={tracking} theme={theme} />
       </div>
 
       <OrganicDivider />
 
-      <section ref={generationRef} className="section-block" data-section="generation">
-        <div className="section-head">
-          <h2>
-            <LineIcon name="power" size={20} /> Generation
-          </h2>
-          <p>Live feeder output against limits with renewable-first context.</p>
-        </div>
-        <div className="section-grid">
-          <SetpointActualChart deviceId={selectedId} telemetry={deviceTelemetry} />
-          <FeederHistoryChart data={history} loading={loading} error={error} />
-        </div>
-      </section>
+      <GenerationSection
+        sectionRef={generationRef}
+        selectedId={selectedId}
+        telemetry={deviceTelemetry}
+        history={history}
+        loading={loading}
+        error={error}
+        onRetry={handleRetry}
+      />
 
-      <section ref={consumptionRef} className="section-block" data-section="consumption">
-        <div className="section-head">
-          <h2>
-            <LineIcon name="leaf" size={20} /> Consumption
-          </h2>
-          <p>How dispatch tracks demand and balances priority.</p>
-        </div>
-        <div className="section-grid">
-          <TrackingErrorChart metrics={tracking} />
-          <SocDistributionChart devices={devices} metrics={tracking} />
-        </div>
-      </section>
+      <ConsumptionSection
+        sectionRef={consumptionRef}
+        metrics={tracking}
+        devices={devices}
+        error={error}
+        onRetry={handleRetry}
+      />
 
-      <section ref={gridRef} className="section-block" data-section="grid">
-        <div className="section-head">
-          <h2>
-            <LineIcon name="alert" size={20} /> Grid health
-          </h2>
-          <p>Device quality, connectivity, and site fairness overview.</p>
-        </div>
-        <div className="card">
-          <h3>Device telemetry</h3>
-          <p className="subtle">Tap a row to animate detail charts. Pi agents are highlighted.</p>
-          <DeviceTable
-            devices={viewDevices}
-            metrics={tracking}
-            selectedId={selectedId}
-            onSelect={(id) => setSelectedId(id)}
-            filter={filter}
-            onFilter={setFilter}
-          />
-        </div>
-      </section>
+      <GridHealthSection
+        sectionRef={gridRef}
+        devices={viewDevices}
+        metrics={tracking}
+        selectedId={selectedId}
+        filter={filter}
+        onFilter={setFilter}
+        onSelect={(id) => setSelectedId(id)}
+        error={error}
+        onRetry={handleRetry}
+      />
 
-      <section ref={forecastRef} className="section-block" data-section="forecast">
-        <div className="section-head">
-          <h2>
-            <LineIcon name="cloud" size={20} /> Forecast
-          </h2>
-          <p>Projected headroom and fairness outlook.</p>
-        </div>
-        <div className="card-grid">
-          <div className="card">
-            <h3>Headroom outlook</h3>
-            <p className="subtle">Smooth curtailment and SOC-aware planning.</p>
-            {aggregated ? (
-              <div className="metric-row">
-                <span className="value">{aggregated.feeder.fairnessScore.toFixed(2)}</span>
-                <span className="subtle">Fairness score</span>
-              </div>
-            ) : (
-              <EmptyState title="No forecast yet" description="Waiting for aggregated headroom metrics." />
-            )}
-          </div>
-        </div>
-      </section>
+      <ForecastSection
+        sectionRef={forecastRef}
+        aggregated={aggregated}
+        loading={loading}
+        error={error}
+        onRetry={handleRetry}
+      />
 
-      <section ref={devicesRef} className="section-block" data-section="devices">
-        <div className="section-head">
-          <h2>
-            <LineIcon name="device" size={20} /> Devices
-          </h2>
-          <p>Selection-aware controls for individual DERs.</p>
-        </div>
-        <div className="card-grid">
-          <SetpointActualChart deviceId={selectedId} telemetry={deviceTelemetry} />
-          <TrackingErrorChart metrics={tracking} />
-        </div>
-      </section>
+      <DeviceDetailSection
+        sectionRef={devicesRef}
+        selectedId={selectedId}
+        telemetry={deviceTelemetry}
+        tracking={tracking}
+        error={error}
+        onRetry={handleRetry}
+      />
 
-      <section ref={settingsRef} className="section-block" data-section="settings">
-        <div className="section-head">
-          <h2>
-            <LineIcon name="spark" size={20} /> Controls
-          </h2>
-          <p>Adjust feeder constraints with a single submission.</p>
-        </div>
-        <TelemetryControlPanel onSubmitted={() => handleNav('hero')} />
-      </section>
+      <ControlsSection sectionRef={settingsRef} onSubmitted={() => handleNav('hero')} />
 
       {toast && (
-        <div className="toast" onAnimationEnd={() => setToast(null)}>
+        <div className="toast" onAnimationEnd={() => setToast(null)} role="status" aria-live="polite">
           {toast}
         </div>
       )}

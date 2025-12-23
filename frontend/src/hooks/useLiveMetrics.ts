@@ -32,7 +32,7 @@ const buildJitteredDelay = (baseMs: number) => {
   return baseMs + jitter;
 };
 
-export function useLiveMetrics(feederId?: string, pollMs = 4000): LiveMetricsState {
+export function useLiveMetrics(feederId?: string, pollMs = 4000, reloadToken = 0): LiveMetricsState {
   const [state, setState] = useState<LiveMetricsState>({
     summary: null,
     devices: [],
@@ -94,7 +94,7 @@ export function useLiveMetrics(feederId?: string, pollMs = 4000): LiveMetricsSta
 
   useEffect(() => {
     latestSignatureRef.current = '';
-  }, [feederId]);
+  }, [feederId, reloadToken]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -126,7 +126,7 @@ export function useLiveMetrics(feederId?: string, pollMs = 4000): LiveMetricsSta
       abortRef.current?.abort();
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [feederId, load, pollMs]);
+  }, [feederId, load, pollMs, reloadToken]);
 
   return state;
 }
