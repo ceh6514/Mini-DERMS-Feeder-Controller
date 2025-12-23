@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import express from 'express';
+import cors from 'cors';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import { mock } from 'node:test';
 
@@ -22,7 +23,18 @@ const testPasswords: Record<string, string> = {
 
 function createApp() {
   const app = express();
-  app.use(express.json());
+  const allowedOrigins = new Set(config.ingress.corsAllowedOrigins);
+  const corsOptions = {
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.has(origin)) return callback(null, true);
+      return callback(null, false);
+    },
+    optionsSuccessStatus: 204,
+  };
+  app.use(cors(corsOptions));
+  app.options('*', cors(corsOptions));
+  app.use(express.json({ limit: config.ingress.jsonBodyLimit }));
   app.use('/api/auth', authRouter);
   app.use('/api', requireAuth);
   app.use('/api/feeder', feederRouter);
@@ -261,6 +273,40 @@ describe('API authentication and routing', () => {
         headers: { Authorization: `Bearer ${badIssuer}` },
       });
       assert.strictEqual(resp.status, 401);
+    } finally {
+      await close();
+    }
+  });
+
+  it('rejects oversized JSON bodies with 413', async () => {
+    const { baseUrl, close } = await startServer();
+    try {
+      const hugePassword = 'x'.repeat(2 * 1024 * 1024);
+      const resp = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: hugePassword }),
+      });
+
+      assert.strictEqual(resp.status, 413);
+    } finally {
+      await close();
+    }
+  });
+
+  it('omits CORS headers for disallowed origins', async () => {
+    const { baseUrl, close } = await startServer();
+    try {
+      const resp = await fetch(`${baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: {
+          origin: 'https://evil.example.com',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ username: 'admin' }),
+      });
+
+      assert.strictEqual(resp.headers.get('access-control-allow-origin'), null);
     } finally {
       await close();
     }

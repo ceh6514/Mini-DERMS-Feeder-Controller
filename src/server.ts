@@ -79,8 +79,20 @@ export async function startServer(
   }
 
   const app = express();
-  app.use(cors());
-  app.use(express.json());
+
+  const allowedOrigins = new Set(config.ingress.corsAllowedOrigins);
+  const corsOptions = {
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.has(origin)) return callback(null, true);
+      return callback(null, false);
+    },
+    optionsSuccessStatus: 204,
+  };
+
+  app.use(cors(corsOptions));
+  app.options('*', cors(corsOptions));
+  app.use(express.json({ limit: config.ingress.jsonBodyLimit }));
 
   app.get('/api/health', async (_req, res) => {
     let dbOk = true;

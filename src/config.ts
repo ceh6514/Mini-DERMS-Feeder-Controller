@@ -33,6 +33,10 @@ export interface Config {
   port: number;
   logLevel: string;
   logPretty: boolean;
+  ingress: {
+    corsAllowedOrigins: string[];
+    jsonBodyLimit: string;
+  };
   db: DbConfig;
   mqtt: MqttConfig;
   tls: {
@@ -151,6 +155,13 @@ const config: Config = {
   port: Number(process.env.PORT ?? 3001),
   logLevel: process.env.LOG_LEVEL ?? 'info',
   logPretty: (process.env.LOG_PRETTY ?? 'true').toLowerCase() === 'true',
+  ingress: {
+    corsAllowedOrigins: (process.env.CORS_ALLOWED_ORIGINS ?? 'http://localhost:3000')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
+    jsonBodyLimit: process.env.JSON_BODY_LIMIT ?? '1mb',
+  },
   db: {
     host: process.env.DB_HOST ?? 'localhost',
     port: Number(process.env.DB_PORT ?? 5432),
