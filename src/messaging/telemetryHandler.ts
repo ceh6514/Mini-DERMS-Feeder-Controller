@@ -5,6 +5,7 @@ import {
   validateTelemetryMessage,
 } from '../contracts';
 import { incrementCounter } from '../observability/metrics';
+import config from '../config';
 
 export type TelemetryPersistResult = 'inserted' | 'duplicate';
 
@@ -71,6 +72,9 @@ export class TelemetryHandler {
         incrementCounter('derms_out_of_order_total', { messageType: 'telemetry' });
       }
 
+      const feederId = message.payload.feederId ?? message.payload.siteId ?? config.defaultFeederId;
+      const siteId = message.payload.siteId ?? feederId;
+
       const row: TelemetrySaveRow = {
         message_id: message.messageId,
         message_version: contractVersion,
@@ -82,8 +86,8 @@ export class TelemetryHandler {
         p_actual_kw: message.payload.readings.powerKw,
         p_setpoint_kw: null,
         soc: message.payload.readings.soc ?? null,
-        site_id: message.payload.siteId ?? message.payload.feederId ?? 'default-feeder',
-        feeder_id: message.payload.feederId ?? message.payload.siteId ?? 'default-feeder',
+        site_id: siteId,
+        feeder_id: feederId,
         source: message.source ?? 'unknown',
       };
 
@@ -113,4 +117,3 @@ export class TelemetryHandler {
     }
   }
 }
-
