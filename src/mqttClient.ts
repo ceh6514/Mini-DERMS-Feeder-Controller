@@ -2,7 +2,7 @@ import mqtt from 'mqtt';
 type NodeMqttClient = ReturnType<typeof mqtt.connect>;
 import config from './config';
 import { upsertDevice } from './repositories/devicesRepo';
-import { insertTelemetry } from './repositories/telemetryRepo';
+import { insertTelemetry, insertTelemetryBatch } from './repositories/telemetryRepo';
 import { recordHeartbeat } from './state/controlLoopMonitor';
 import { TelemetryHandler } from './messaging/telemetryHandler';
 import { ContractValidationError } from './contracts';
@@ -34,6 +34,17 @@ function getTelemetryHandler() {
           site_id: row.site_id,
           feeder_id: row.feeder_id,
         }),
+      saveBatch: (rows) =>
+        insertTelemetryBatch(
+          rows.map((row) => ({
+            ...row,
+            message_type: row.message_type,
+          })),
+        ),
+    }, {
+      batchSize: config.telemetryIngest.batchSize,
+      flushIntervalMs: config.telemetryIngest.flushIntervalMs,
+      maxQueueSize: config.telemetryIngest.maxQueueSize,
     });
   }
   return telemetryHandler;

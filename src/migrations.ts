@@ -157,3 +157,30 @@ export async function runMigrations(options: RunMigrationsOptions = {}): Promise
     }
   });
 }
+
+export async function getMigrationState(options: { client?: any; searchPath?: string } = {}) {
+  const migrations = loadMigrations();
+  try {
+    let applied: string[] = [];
+    await withClient(options.client, async (client) => {
+      if (options.searchPath) {
+        await client.query(`SET search_path TO ${options.searchPath}`);
+      }
+      await ensureMigrationsTable(client);
+      const res = await client.query('SELECT version FROM schema_migrations');
+      applied = (res.rows ?? []).map((r: any) => r.version);
+    });
+    const appliedSet = new Set(applied);
+    const pending = migrations.map((m) => m.version).filter((v) => !appliedSet.has(v));
+    const latestApplied = applied.sort().slice(-1)[0] ?? null;
+    return {
+      ok: pending.length === 0,
+      applied,
+      pending,
+      latest: latestApplied,
+    };
+  } catch (err) {
+    logger.error({ err }, '[migrations] failed to read migration state');
+    return { ok: false, applied: [], pending: migrations.map((m) => m.version), latest: null, error: (err as Error).message };
+  }
+}

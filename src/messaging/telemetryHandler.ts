@@ -4,13 +4,14 @@ import {
   contractVersion,
   validateTelemetryMessage,
 } from '../contracts';
-import { incrementCounter } from '../observability/metrics';
+import { incrementCounter, setGaugeValue } from '../observability/metrics';
 import config from '../config';
 
 export type TelemetryPersistResult = 'inserted' | 'duplicate';
 
 export interface TelemetryPersistence {
   save: (row: TelemetrySaveRow) => Promise<TelemetryPersistResult>;
+  saveBatch?: (rows: TelemetrySaveRow[]) => Promise<TelemetryPersistResult[]>;
 }
 
 export interface TelemetrySaveRow {
@@ -32,6 +33,9 @@ export interface TelemetrySaveRow {
 export interface TelemetryHandlerOptions {
   lenient?: boolean;
   allowFutureMs?: number;
+  batchSize?: number;
+  flushIntervalMs?: number;
+  maxQueueSize?: number;
 }
 
 interface LatestMarker {
@@ -39,10 +43,23 @@ interface LatestMarker {
   sentAtMs?: number;
 }
 
+interface TelemetryTask {
+  row: TelemetrySaveRow;
+  message: TelemetryMessageV1;
+  newest: boolean;
+  resolve: (result: { status: TelemetryPersistResult; newest: boolean; parsed?: TelemetryMessageV1 }) => void;
+  reject: (err: unknown) => void;
+}
+
 export class TelemetryHandler {
   private latestByDevice = new Map<string, LatestMarker>();
+  private queue: TelemetryTask[] = [];
+  private flushing = false;
+  private flushTimer: NodeJS.Timeout | null = null;
 
-  constructor(private persistence: TelemetryPersistence, private options: TelemetryHandlerOptions = {}) {}
+  constructor(private persistence: TelemetryPersistence, private options: TelemetryHandlerOptions = {}) {
+    setGaugeValue('derms_telemetry_ingest_queue_depth', 0);
+  }
 
   isNewer(deviceId: string, tsMs: number, sentAtMs?: number): boolean {
     const current = this.latestByDevice.get(deviceId);
@@ -91,16 +108,7 @@ export class TelemetryHandler {
         source: message.source ?? 'unknown',
       };
 
-      const status = await this.persistence.save(row);
-      if (status === 'duplicate') {
-        incrementCounter('derms_duplicate_message_total', { messageType: 'telemetry' });
-      }
-
-      if (newest) {
-        this.markLatest(message.deviceId, message.timestampMs, message.sentAtMs);
-      }
-
-      return { status, newest, parsed: message };
+      return await this.enqueue(row, message, newest);
     } catch (err) {
       const reason = err instanceof ContractValidationError ? err.details?.join(';') ?? err.message : 'unknown';
       if (err instanceof ContractValidationError && err.message.includes('Unsupported')) {
@@ -113,6 +121,104 @@ export class TelemetryHandler {
         messageType: 'telemetry',
         reason,
       });
+      throw err;
+    }
+  }
+
+  private getBatchSize() {
+    return Math.max(1, this.options.batchSize ?? 1);
+  }
+
+  private getFlushIntervalMs() {
+    return Math.max(0, this.options.flushIntervalMs ?? 50);
+  }
+
+  private getMaxQueueSize() {
+    return Math.max(1, this.options.maxQueueSize ?? 500);
+  }
+
+  private enqueue(
+    row: TelemetrySaveRow,
+    message: TelemetryMessageV1,
+    newest: boolean,
+  ): Promise<{ status: TelemetryPersistResult; newest: boolean; parsed?: TelemetryMessageV1 }> {
+    return new Promise((resolve, reject) => {
+      if (this.queue.length >= this.getMaxQueueSize()) {
+        incrementCounter('derms_telemetry_dropped_total', { reason: 'backpressure' });
+        reject(new Error('telemetry_backpressure_queue_full'));
+        return;
+      }
+
+      this.queue.push({ row, message, newest, resolve, reject });
+      setGaugeValue('derms_telemetry_ingest_queue_depth', this.queue.length);
+      this.scheduleFlush();
+    });
+  }
+
+  private scheduleFlush() {
+    if (this.queue.length >= this.getBatchSize()) {
+      void this.flush();
+      return;
+    }
+    if (!this.flushTimer) {
+      const delay = this.getFlushIntervalMs();
+      this.flushTimer = setTimeout(() => {
+        this.flushTimer = null;
+        void this.flush();
+      }, delay);
+    }
+  }
+
+  private async flush() {
+    if (this.flushing) return;
+    this.flushing = true;
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    try {
+      while (this.queue.length > 0) {
+        const batch = this.queue.splice(0, this.getBatchSize());
+        await this.persistBatch(batch);
+        setGaugeValue('derms_telemetry_ingest_queue_depth', this.queue.length);
+      }
+    } finally {
+      this.flushing = false;
+      if (this.queue.length > 0) {
+        this.scheduleFlush();
+      }
+    }
+  }
+
+  private async persistBatch(batch: TelemetryTask[]) {
+    try {
+      const rows = batch.map((item) => item.row);
+      let statuses: TelemetryPersistResult[] | null = null;
+      if (this.persistence.saveBatch) {
+        statuses = await this.persistence.saveBatch(rows);
+      }
+      if (!statuses || statuses.length !== rows.length) {
+        statuses = [];
+        for (const row of rows) {
+          // eslint-disable-next-line no-await-in-loop
+          statuses.push(await this.persistence.save(row));
+        }
+      }
+
+      statuses.forEach((status, idx) => {
+        const task = batch[idx];
+        if (status === 'duplicate') {
+          incrementCounter('derms_duplicate_message_total', { messageType: 'telemetry' });
+        }
+
+        if (task.newest) {
+          this.markLatest(task.message.deviceId, task.message.timestampMs, task.message.sentAtMs);
+        }
+
+        task.resolve({ status, newest: task.newest, parsed: task.message });
+      });
+    } catch (err) {
+      batch.forEach((task) => task.reject(err));
       throw err;
     }
   }

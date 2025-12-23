@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { runMigrations } from '../src/migrations';
+import { getMigrationState, runMigrations } from '../src/migrations';
 
 class FakeClient {
   migrations = new Set<string>();
@@ -9,7 +9,14 @@ class FakeClient {
   async query(sql: string, params?: any[]) {
     if (typeof sql === 'string') {
       if (sql.startsWith('SELECT version FROM schema_migrations')) {
-        const rows = Array.from(this.migrations).map((version) => ({ version }));
+        const rows = Array.from(this.migrations)
+          .filter((version) => {
+            if (params && params.length > 0) {
+              return version === params[0];
+            }
+            return true;
+          })
+          .map((version) => ({ version }));
         return { rows };
       }
       if (sql.startsWith('CREATE TABLE IF NOT EXISTS schema_migrations')) {
@@ -46,5 +53,16 @@ describe('database migrations', () => {
 
     await runMigrations({ client, direction: 'down' });
     assert.equal(client.migrations.size, appliedCount - 1);
+  });
+
+  it('reports pending migrations', async () => {
+    const client = new FakeClient();
+    const stateBefore = await getMigrationState({ client });
+    assert.equal(stateBefore.ok, false);
+
+    await runMigrations({ client });
+    const stateAfter = await getMigrationState({ client });
+    assert.equal(stateAfter.ok, true);
+    assert.ok(stateAfter.applied.length > 0);
   });
 });

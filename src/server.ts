@@ -3,7 +3,7 @@ import cors from 'cors';
 import fs from 'fs';
 import http from 'http';
 import https from 'https';
-import config from './config';
+import config, { getAuthConfigStatus } from './config';
 import { initSchema, pool, rebuildPool } from './db';
 import { getMqttStatus, startMqttClient, stopMqttClient } from './mqttClient';
 import { startControlLoop } from './controllers/controlLoop';
@@ -17,6 +17,7 @@ import drProgramsRouter from './routes/drPrograms';
 import metricsRouter from './routes/metrics';
 import { authRouter, requireAuth } from './auth';
 import logger from './logger';
+import { getMigrationState } from './migrations';
 import {
   collectHealthMetrics,
   metricsContentType,
@@ -116,16 +117,22 @@ export async function startServer(
     const offlineCount = controlLoop.offlineDevices.length;
     const readiness = getReadiness();
     const ready = readiness.dbReady && readiness.mqttReady;
+    const migrationState = await getMigrationState({ client: pool });
+    const authStatus = getAuthConfigStatus();
     const healthyLoop =
       controlLoop.status !== 'error' &&
       controlLoop.status !== 'stalled' &&
       controlLoop.status !== 'degraded';
     const overallStatus =
-      dbOk && ready && offlineCount === 0 && healthyLoop ? 'ok' : 'degraded';
+      dbOk && ready && offlineCount === 0 && healthyLoop && migrationState.ok && authStatus.ok
+        ? 'ok'
+        : 'degraded';
 
     res.json({
       status: overallStatus,
       db: { ok: dbOk },
+      migrations: migrationState,
+      auth: authStatus,
       mqtt: getMqttStatus(),
       controlLoop: {
         ...controlLoop,

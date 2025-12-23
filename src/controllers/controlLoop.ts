@@ -175,6 +175,7 @@ export function computeAllowedShares(
   }
 
   const getWeight = (ev: DeviceWithTelemetry) => {
+    // Weighting favors under-served, higher-priority devices while guarding reserve SOC.
     const priorityWeight = params.respectPriority
       ? Math.max(ev.priority, 1) * 1.25
       : Math.max(ev.priority, 1);
@@ -203,6 +204,7 @@ export function computeAllowedShares(
   for (const ev of evDevices) {
     const weight = weights.get(ev.id) ?? 0;
     const existing = deviceDeficits.get(ev.id) ?? 0;
+    // Deficit accumulator smooths swings between ticks and rewards devices left behind last cycle.
     deviceDeficits.set(ev.id, existing + weight * quantumPerWeight);
   }
 

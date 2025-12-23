@@ -29,6 +29,12 @@ export interface MqttConfig {
   topicPrefix: string;
 }
 
+export interface TelemetryIngestConfig {
+  batchSize: number;
+  flushIntervalMs: number;
+  maxQueueSize: number;
+}
+
 export interface Config {
   port: number;
   logLevel: string;
@@ -39,6 +45,7 @@ export interface Config {
   };
   db: DbConfig;
   mqtt: MqttConfig;
+  telemetryIngest: TelemetryIngestConfig;
   tls: {
     enabled: boolean;
     keyPath?: string;
@@ -93,6 +100,14 @@ function validateSecret(name: string, value: string | undefined, minLength = 24)
   }
 
   return value;
+}
+
+function parsePositiveInt(raw: string | undefined, fallback: number, label: string): number {
+  const parsed = Number(raw ?? fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`[config] ${label} must be a positive number`);
+  }
+  return parsed;
 }
 
 export function parseAuthUsers(raw = process.env.AUTH_USERS): Config['auth']['users'] {
@@ -174,6 +189,19 @@ const config: Config = {
     port: Number(process.env.MQTT_PORT ?? 1883),
     topicPrefix: (process.env.MQTT_TOPIC_PREFIX ?? 'der').replace(/\/$/, ''),
   },
+  telemetryIngest: {
+    batchSize: parsePositiveInt(process.env.TELEMETRY_BATCH_SIZE, 25, 'TELEMETRY_BATCH_SIZE'),
+    flushIntervalMs: parsePositiveInt(
+      process.env.TELEMETRY_BATCH_FLUSH_MS,
+      100,
+      'TELEMETRY_BATCH_FLUSH_MS',
+    ),
+    maxQueueSize: parsePositiveInt(
+      process.env.TELEMETRY_MAX_QUEUE_SIZE,
+      2000,
+      'TELEMETRY_MAX_QUEUE_SIZE',
+    ),
+  },
   tls: {
     enabled: (process.env.TLS_ENABLED ?? 'false').toLowerCase() === 'true',
     keyPath: process.env.TLS_KEY_PATH,
@@ -220,5 +248,28 @@ const config: Config = {
     users: parseAuthUsers(),
   },
 };
+
+export function getAuthConfigStatus() {
+  const issues: string[] = [];
+  if (!config.auth.users.length) {
+    issues.push('No AUTH_USERS configured');
+  }
+  const invalidHashes = config.auth.users
+    .map((u) => ({ user: u.username, ok: isValidPasswordHash(u.passwordHash) }))
+    .filter((u) => !u.ok)
+    .map((u) => u.user);
+  if (invalidHashes.length > 0) {
+    issues.push(`Invalid passwordHash for: ${invalidHashes.join(', ')}`);
+  }
+  if (!config.auth.jwtSecret || config.auth.jwtSecret.length < 24) {
+    issues.push('JWT_SECRET too short');
+  }
+
+  return {
+    ok: issues.length === 0,
+    issues,
+    userCount: config.auth.users.length,
+  };
+}
 
 export default config;

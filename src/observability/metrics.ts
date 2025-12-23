@@ -21,7 +21,8 @@ type GaugeMetricName =
   | 'derms_feeder_headroom_kw'
   | 'derms_feeder_allocated_kw'
   | 'derms_feeder_unused_kw'
-  | 'derms_setpoint_inflight';
+  | 'derms_setpoint_inflight'
+  | 'derms_telemetry_ingest_queue_depth';
 
 type CounterMetricName =
   | 'derms_stale_telemetry_total'
@@ -33,6 +34,7 @@ type CounterMetricName =
   | 'derms_contract_version_reject_total'
   | 'derms_duplicate_message_total'
   | 'derms_out_of_order_total'
+  | 'derms_telemetry_dropped_total'
   | 'derms_control_cycle_errors_total'
   | 'derms_setpoint_publish_total'
   | 'derms_setpoint_ack_total';
@@ -77,6 +79,10 @@ const metricDefs: Record<GaugeMetricName | CounterMetricName | HistogramMetricNa
   derms_feeder_allocated_kw: { help: 'Allocated feeder headroom (kW)', type: 'gauge' },
   derms_feeder_unused_kw: { help: 'Unused feeder headroom (kW)', type: 'gauge' },
   derms_setpoint_inflight: { help: 'Setpoints currently in-flight (0/1)', type: 'gauge' },
+  derms_telemetry_ingest_queue_depth: {
+    help: 'Current telemetry ingest queue depth after backpressure',
+    type: 'gauge',
+  },
   derms_stale_telemetry_total: {
     help: 'Count of stale telemetry samples by device',
     type: 'counter',
@@ -108,6 +114,10 @@ const metricDefs: Record<GaugeMetricName | CounterMetricName | HistogramMetricNa
   },
   derms_out_of_order_total: {
     help: 'Count of out-of-order messages observed per message type',
+    type: 'counter',
+  },
+  derms_telemetry_dropped_total: {
+    help: 'Telemetry messages dropped because of backpressure limits',
     type: 'counter',
   },
   derms_control_cycle_errors_total: {
@@ -161,6 +171,7 @@ const gaugeValues: Record<GaugeMetricName, number> = {
   derms_feeder_allocated_kw: 0,
   derms_feeder_unused_kw: 0,
   derms_setpoint_inflight: 0,
+  derms_telemetry_ingest_queue_depth: 0,
 };
 
 const labeledGauges: Record<Extract<GaugeMetricName, 'derms_control_degraded' | 'derms_control_stopped'>, Map<string, number>> = {
@@ -178,6 +189,7 @@ const labeledCounters: Record<CounterMetricName, Map<string, number>> = {
   derms_contract_version_reject_total: new Map(),
   derms_duplicate_message_total: new Map(),
   derms_out_of_order_total: new Map(),
+  derms_telemetry_dropped_total: new Map(),
   derms_control_cycle_errors_total: new Map(),
   derms_setpoint_publish_total: new Map(),
   derms_setpoint_ack_total: new Map(),
