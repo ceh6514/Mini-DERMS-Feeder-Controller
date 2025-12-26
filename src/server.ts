@@ -1,4 +1,5 @@
 import express from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import cors from 'cors';
 import fs from 'fs';
 import http from 'http';
@@ -158,6 +159,14 @@ export async function startServer(
   app.use('/api/simulation', simulationRouter);
   app.use('/api/dr-programs', drProgramsRouter);
   app.use('/api', metricsRouter);
+
+  app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+    logger.error({ err, path: req.path }, '[http] unhandled request error');
+    if (res.headersSent) {
+      return _next(err);
+    }
+    res.status(500).json({ error: 'Internal server error' });
+  });
 
   if (shouldExposePrometheus()) {
     app.get(prometheusPath(), async (_req, res) => {

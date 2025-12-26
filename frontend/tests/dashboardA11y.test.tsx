@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import Sidebar from '../src/components/layout/Sidebar.js';
 import DeviceTable from '../src/components/devices/DeviceTable.js';
@@ -9,9 +8,9 @@ describe('Dashboard accessibility affordances', () => {
   it('marks active navigation with aria attributes', () => {
     const markup = renderToStaticMarkup(<Sidebar active="grid" onChange={() => {}} />);
 
-    assert.match(markup, /aria-label="Jump to Grid health"/);
-    assert.match(markup, /aria-current="true"/);
-    assert.match(markup, /aria-controls="grid-section"/);
+    expect(markup).toMatch(/aria-label="Jump to Grid health"/);
+    expect(markup).toMatch(/aria-current="true"/);
+    expect(markup).toMatch(/aria-controls="grid-section"/);
   });
 
   it('exposes device filters and selection states for screen readers', () => {
@@ -62,9 +61,9 @@ describe('Dashboard accessibility affordances', () => {
       />,
     );
 
-    assert.match(markup, /aria-pressed="true"/);
-    assert.match(markup, /role="grid"/);
-    assert.match(markup, /aria-selected="true"/);
+    expect(markup).toMatch(/aria-pressed="true"/);
+    expect(markup).toMatch(/role="grid"/);
+    expect(markup).toMatch(/aria-selected="true"/);
   });
 
   it('surfaces retryable dashboard errors to assistive tech', () => {
@@ -72,7 +71,7 @@ describe('Dashboard accessibility affordances', () => {
       <DashboardError title="Test load" message="Something went wrong" onRetry={() => {}} />,
     );
 
-    assert.match(markup, /role="alert"/);
-    assert.match(markup, /Retry loading Test load/);
+    expect(markup).toMatch(/role="alert"/);
+    expect(markup).toMatch(/Retry loading Test load/);
   });
 });

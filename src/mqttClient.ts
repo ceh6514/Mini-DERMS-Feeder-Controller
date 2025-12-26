@@ -1,4 +1,13 @@
-import mqtt from 'mqtt';
+import fs from 'fs';
+import mqtt from 'mqtt/dist/mqtt';
+/**
+ * MQTT ingestion client.
+ *
+ * Subscribes to `<topicPrefix>/telemetry/#` with QoS 0 for streaming device reports and
+ * enforces TLS/credential configuration plus payload/time guards. Control setpoints are
+ * published from the control loop at QoS 1/retained so devices receive the latest target
+ * after reconnecting.
+ */
 type NodeMqttClient = ReturnType<typeof mqtt.connect>;
 import config from './config';
 import { upsertDevice } from './repositories/devicesRepo';
@@ -55,9 +64,26 @@ function getTelemetryHandler() {
   */
 async function parseAndStoreMessage(topic: string, payload: Buffer) {
   try {
+    if (payload.length > config.mqtt.maxPayloadBytes) {
+      logger.warn('[mqttClient] dropped payload exceeding max size', {
+        topic,
+        bytes: payload.length,
+      });
+      incrementCounter('derms_telemetry_dropped_total', { reason: 'payload_too_large' });
+      return;
+    }
+
     const raw = JSON.parse(payload.toString('utf-8')) as Record<string, unknown>;
     const handler = getTelemetryHandler();
-    const result = await handler.handle(raw);
+    const result = (await Promise.race([
+      handler.handle(raw),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error('telemetry_processing_timeout')),
+          config.mqtt.processingTimeoutMs,
+        ),
+      ),
+    ])) as Awaited<ReturnType<TelemetryHandler['handle']>>;
 
     if (!result.parsed) return;
     const telemetry = result.parsed;
@@ -80,6 +106,11 @@ async function parseAndStoreMessage(topic: string, payload: Buffer) {
       recordHeartbeat(telemetry.deviceId, telemetry.timestampMs);
     }
   } catch (err) {
+    if (err instanceof Error && err.message === 'telemetry_processing_timeout') {
+      logger.error({ topic }, '[mqttClient] telemetry processing exceeded time budget');
+      incrementCounter('derms_telemetry_dropped_total', { reason: 'processing_timeout' });
+      return;
+    }
     if (err instanceof ContractValidationError) {
       logger.warn('[mqttClient] invalid telemetry payload', { err });
       return;
@@ -97,10 +128,30 @@ async function parseAndStoreMessage(topic: string, payload: Buffer) {
  */
 export async function startMqttClient(): Promise<void> {
   setMqttReady(false, 'connecting');
+  const protocol = config.mqtt.tls.enabled ? 'mqtts' : 'mqtt';
+  if (config.mqtt.tls.enabled && protocol !== 'mqtts') {
+    throw new Error('TLS is enabled for MQTT but a secure protocol was not selected');
+  }
+
+  const tlsOptions = config.mqtt.tls.enabled
+    ? {
+        protocol,
+        ca: config.mqtt.tls.caPath ? fs.readFileSync(config.mqtt.tls.caPath) : undefined,
+        cert: config.mqtt.tls.certPath ? fs.readFileSync(config.mqtt.tls.certPath) : undefined,
+        key: config.mqtt.tls.keyPath ? fs.readFileSync(config.mqtt.tls.keyPath) : undefined,
+        rejectUnauthorized: config.mqtt.tls.rejectUnauthorized,
+      }
+    : { protocol };
+
+  const authOptions = config.mqtt.auth.username
+    ? { username: config.mqtt.auth.username, password: config.mqtt.auth.password }
+    : {};
+
   mqttClient = mqtt.connect({
     host: config.mqtt.host,
     port: config.mqtt.port,
-    protocol: 'mqtt',
+    ...tlsOptions,
+    ...authOptions,
   });
 
   mqttClient.on('connect', () => {
@@ -121,12 +172,9 @@ export async function startMqttClient(): Promise<void> {
   });
 
   mqttClient.on('message', (topic: string, payload: Buffer) => {
-    //Handle telemetry messages
-    if (topic.startsWith(`${baseTopic}/telemetry/`)) {
-      parseAndStoreMessage(topic, payload).catch((err) => {
-        logger.error({ err }, '[mqttClient] failed to handle telemetry message');
-      });
-    }
+    handleTelemetryMessage(topic, payload).catch((err) => {
+      logger.error({ err }, '[mqttClient] failed to handle telemetry message');
+    });
   });
 
   mqttClient.on('error', (err: Error) => {
@@ -148,6 +196,12 @@ export async function startMqttClient(): Promise<void> {
   });
 
   //We don't await anything here; startup should not block on MQTT
+}
+
+export async function handleTelemetryMessage(topic: string, payload: Buffer) {
+  if (topic.startsWith(`${baseTopic}/telemetry/`)) {
+    await parseAndStoreMessage(topic, payload);
+  }
 }
 
 export function getMqttStatus() {
