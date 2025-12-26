@@ -23,10 +23,27 @@ export interface DbConfig {
   database: string;
 }
 
+export interface MqttTlsConfig {
+  enabled: boolean;
+  caPath?: string;
+  certPath?: string;
+  keyPath?: string;
+  rejectUnauthorized: boolean;
+}
+
+export interface MqttAuthConfig {
+  username?: string;
+  password?: string;
+}
+
 export interface MqttConfig {
   host: string;
   port: number;
   topicPrefix: string;
+  tls: MqttTlsConfig;
+  auth: MqttAuthConfig;
+  maxPayloadBytes: number;
+  processingTimeoutMs: number;
 }
 
 export interface TelemetryIngestConfig {
@@ -78,6 +95,7 @@ export interface Config {
     tokenTtlHours: number;
     issuer: string;
     audience: string;
+    clockToleranceSeconds: number;
     users: {
       username: string;
       passwordHash: string;
@@ -85,6 +103,11 @@ export interface Config {
     }[];
   };
 }
+
+const sampleSecrets = new Set([
+  'd141924884297a46ee149d98048d5a0f11725297fba0c0b709ee44306d1f0ac8',
+  'test-suite-secret-rotate-me-please-123',
+]);
 
 function validateSecret(name: string, value: string | undefined, minLength = 24): string {
   if (!value) {
@@ -99,6 +122,10 @@ function validateSecret(name: string, value: string | undefined, minLength = 24)
     throw new Error(`[config] ${name} cannot use common or default credentials`);
   }
 
+  if (sampleSecrets.has(value) && process.env.NODE_ENV === 'production' && process.env.ALLOW_SAMPLE_SECRETS !== 'true') {
+    throw new Error(`[config] ${name} cannot use sample or test secrets in this environment`);
+  }
+
   return value;
 }
 
@@ -106,6 +133,14 @@ function parsePositiveInt(raw: string | undefined, fallback: number, label: stri
   const parsed = Number(raw ?? fallback);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error(`[config] ${label} must be a positive number`);
+  }
+  return parsed;
+}
+
+function parseNonNegativeInt(raw: string | undefined, fallback: number, label: string): number {
+  const parsed = Number(raw ?? fallback);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`[config] ${label} must be zero or a positive number`);
   }
   return parsed;
 }
@@ -188,6 +223,27 @@ const config: Config = {
     host: process.env.MQTT_HOST ?? 'localhost',
     port: Number(process.env.MQTT_PORT ?? 1883),
     topicPrefix: (process.env.MQTT_TOPIC_PREFIX ?? 'der').replace(/\/$/, ''),
+    tls: {
+      enabled: (process.env.MQTT_TLS_ENABLED ?? 'false').toLowerCase() === 'true',
+      caPath: process.env.MQTT_TLS_CA_PATH,
+      certPath: process.env.MQTT_TLS_CERT_PATH,
+      keyPath: process.env.MQTT_TLS_KEY_PATH,
+      rejectUnauthorized: (process.env.MQTT_TLS_REJECT_UNAUTHORIZED ?? 'true') === 'true',
+    },
+    auth: {
+      username: process.env.MQTT_USERNAME,
+      password: process.env.MQTT_PASSWORD,
+    },
+    maxPayloadBytes: parsePositiveInt(
+      process.env.MQTT_MAX_PAYLOAD_BYTES,
+      256_000,
+      'MQTT_MAX_PAYLOAD_BYTES',
+    ),
+    processingTimeoutMs: parsePositiveInt(
+      process.env.MQTT_PROCESSING_TIMEOUT_MS,
+      3_000,
+      'MQTT_PROCESSING_TIMEOUT_MS',
+    ),
   },
   telemetryIngest: {
     batchSize: parsePositiveInt(process.env.TELEMETRY_BATCH_SIZE, 25, 'TELEMETRY_BATCH_SIZE'),
@@ -245,6 +301,11 @@ const config: Config = {
     tokenTtlHours: Number(process.env.JWT_TOKEN_TTL_HOURS ?? 12),
     issuer: process.env.JWT_ISSUER ?? 'mini-derms-feeder-controller',
     audience: process.env.JWT_AUDIENCE ?? 'mini-derms-feeder-api',
+    clockToleranceSeconds: parseNonNegativeInt(
+      process.env.JWT_CLOCK_TOLERANCE_SECONDS,
+      60,
+      'JWT_CLOCK_TOLERANCE_SECONDS',
+    ),
     users: parseAuthUsers(),
   },
 };
@@ -263,6 +324,9 @@ export function getAuthConfigStatus() {
   }
   if (!config.auth.jwtSecret || config.auth.jwtSecret.length < 24) {
     issues.push('JWT_SECRET too short');
+  }
+  if (sampleSecrets.has(config.auth.jwtSecret)) {
+    issues.push('JWT_SECRET is using a sample value');
   }
 
   return {

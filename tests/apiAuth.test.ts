@@ -75,6 +75,7 @@ function buildPayload({
   role = 'viewer',
   iatOffsetSeconds = 0,
   expOffsetSeconds = config.auth.tokenTtlHours * 60 * 60,
+  nbfOffsetSeconds,
   issuer = config.auth.issuer,
   audience = config.auth.audience,
 }: {
@@ -82,6 +83,7 @@ function buildPayload({
   role?: string;
   iatOffsetSeconds?: number;
   expOffsetSeconds?: number;
+  nbfOffsetSeconds?: number;
   issuer?: string;
   audience?: string;
 }) {
@@ -91,6 +93,7 @@ function buildPayload({
     role,
     iat: nowSeconds + iatOffsetSeconds,
     exp: nowSeconds + expOffsetSeconds,
+    nbf: nbfOffsetSeconds !== undefined ? nowSeconds + nbfOffsetSeconds : undefined,
     iss: issuer,
     aud: audience,
   };
@@ -248,6 +251,26 @@ describe('API authentication and routing', () => {
       });
       assert.strictEqual(malformedResp.status, 401);
     } finally {
+      await close();
+    }
+  });
+
+  it('rejects JWTs outside configured clock tolerance', async () => {
+    const { baseUrl, close } = await startServer();
+    const originalTolerance = config.auth.clockToleranceSeconds;
+    config.auth.clockToleranceSeconds = 30;
+    try {
+      const futureNbf = signRawToken(
+        { alg: 'HS256', typ: 'JWT' },
+        buildPayload({ nbfOffsetSeconds: 120 }),
+      );
+
+      const resp = await fetch(`${baseUrl}/api/feeder/summary`, {
+        headers: { Authorization: `Bearer ${futureNbf}` },
+      });
+      assert.strictEqual(resp.status, 401);
+    } finally {
+      config.auth.clockToleranceSeconds = originalTolerance;
       await close();
     }
   });

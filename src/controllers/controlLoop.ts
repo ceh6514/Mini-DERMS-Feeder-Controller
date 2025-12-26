@@ -1,3 +1,11 @@
+/**
+ * Control loop entry point.
+ *
+ * Each iteration fetches feeder limits and latest telemetry, optimizes device setpoints,
+ * and publishes MQTT setpoint messages (retained QoS 1) per device. The loop records
+ * readiness/health metrics, alerts for stalls/offline devices, and updates tracking/
+ * safety state so downstream status endpoints reflect the latest cycle.
+ */
 import config from '../config';
 import { getCurrentFeederLimit } from '../repositories/eventsRepo';
 import {
@@ -224,7 +232,7 @@ export function computeAllowedShares(
     const result = optimizeAllocations(evDevices, availableForEv, params, objectiveWeights);
     usedOptimizer = result.feasible;
     if (!result.feasible && result.message) {
-      console.warn('[controlLoop] optimizer infeasible, falling back to heuristic', {
+      logger.warn('[controlLoop] optimizer infeasible, falling back to heuristic', {
         reason: result.message,
       });
     }
@@ -295,7 +303,7 @@ export function computeAllowedShares(
 
   const totalAllowed = [...allowed.values()].reduce((sum, val) => sum + val, 0);
   if (mode === 'optimizer' && usedOptimizer && totalAllowed + 0.01 < Math.min(availableForEv, totalCap)) {
-    console.warn('[controlLoop] optimizer could not fully utilize available headroom', {
+    logger.warn('[controlLoop] optimizer could not fully utilize available headroom', {
       availableForEv,
       totalCap,
       allocated: totalAllowed,
@@ -377,11 +385,10 @@ async function publishCommands(
   }
 
   if (breakerState.blocked) {
-    console.warn(
-      `[controlLoop] MQTT publish breaker open; skipping publishes until ${new Date(
-        breakerState.retryAt ?? nowMs,
-      ).toISOString()} (${logContext})`,
-    );
+    logger.warn('[controlLoop] MQTT publish breaker open; skipping publishes', {
+      retryAtIso: new Date(breakerState.retryAt ?? nowMs).toISOString(),
+      context: logContext,
+    });
     const policy = getSafetyPolicy();
     recordFailure(policy, 'mqtt', 'mqtt_breaker_open');
     return {
@@ -397,9 +404,9 @@ async function publishCommands(
   }
 
   if (!mqttClient || !mqttClient.connected) {
-    console.warn(
-      `[controlLoop] MQTT not connected, skipping publish this tick (${logContext})`
-    );
+    logger.warn('[controlLoop] MQTT not connected, skipping publish this tick', {
+      context: logContext,
+    });
     incrementCounter('derms_mqtt_disconnect_total');
     for (const cmd of commands) {
       incrementCounter('derms_setpoint_publish_total', {
@@ -489,7 +496,7 @@ async function publishCommands(
         deviceType: cmd.deviceType,
       });
     } catch (err) {
-      console.error('[controlLoop] failed to publish command', err);
+      logger.error({ err, deviceId: cmd.deviceId }, '[controlLoop] failed to publish command');
       failed += 1;
       failures.push({ deviceId: cmd.deviceId, deviceType: cmd.deviceType, reason: 'publish_error' });
       incrementCounter('derms_mqtt_publish_fail_total', { device_id: cmd.deviceId });
@@ -587,9 +594,10 @@ async function runFeederTick(
   if (offlineDevices.size > 0) {
     const offlineForFeeder = [...offlineDevices].filter((id) => deviceLookup.has(id));
     if (offlineForFeeder.length > 0) {
-      console.warn(
-        `[controlLoop:${feederId}] ${offlineForFeeder.length} device(s) offline, excluding from allocation`,
-      );
+      logger.warn('[controlLoop] devices offline, excluding from allocation', {
+        feederId,
+        offlineCount: offlineForFeeder.length,
+      });
     }
   }
 
@@ -688,7 +696,7 @@ async function runFeederTick(
       `feeder=${feederId} fallback_only`,
       now.getTime(),
     );
-    console.log(`[controlLoop:${feederId}] no telemetry yet, publishing safe defaults`);
+    logger.info('[controlLoop] no telemetry yet, publishing safe defaults', { feederId });
     return {
       feederId,
       commandsPublished: publishResult.success,
@@ -721,7 +729,7 @@ async function runFeederTick(
   const effectiveAvailableForEv = adjustedAvailable;
 
   if (evDevices.length === 0) {
-    console.log(`[controlLoop:${feederId}] no dispatchable devices found, skipping control`);
+    logger.info('[controlLoop] no dispatchable devices found, skipping control', { feederId });
     publishResult = await publishCommands(
       fallbackCommands,
       `feeder=${feederId} no_dispatchable`,
@@ -919,30 +927,23 @@ async function runFeederTick(
       next: log.next.toFixed(2),
       pMax: log.pMax.toFixed(2),
     }));
-    console.log(
-      `[controlLoop:${feederId}] total`,
-      totalKw.toFixed(2),
-      'limit',
-      limitKw.toFixed(2),
-      'nonEv',
-      nonEvKw.toFixed(2),
-      'availableEv',
-      availableForEv.toFixed(2),
-      'effectiveEv',
-      effectiveAvailableForEv.toFixed(2),
-      'dr',
-      activeProgram
+    logger.info('[controlLoop] dispatch summary', {
+      feederId,
+      totalKw: Number(totalKw.toFixed(2)),
+      limitKw: Number(limitKw.toFixed(2)),
+      nonEvKw: Number(nonEvKw.toFixed(2)),
+      availableEvKw: Number(availableForEv.toFixed(2)),
+      effectiveAvailableEvKw: Number(effectiveAvailableForEv.toFixed(2)),
+      demandResponse: activeProgram
         ? {
             mode: activeProgram.mode,
-            shed: shedApplied.toFixed(2),
-            elasticity: elasticity.toFixed(2),
+            shed: Number(shedApplied.toFixed(2)),
+            elasticity: Number(elasticity.toFixed(2)),
           }
         : 'none',
-      'ev commands',
-      commandSummaries,
-      'ev deficits',
-      deficitSummaries,
-    );
+      commands: commandSummaries,
+      deficits: deficitSummaries,
+    });
     publishResult = await publishCommands(
       [...fallbackCommands, ...commands],
       `feeder=${feederId} total=${totalKw.toFixed(2)} limit=${limitKw.toFixed(2)} availableForEv=${availableForEv.toFixed(2)} effective=${effectiveAvailableForEv.toFixed(2)}`,
@@ -959,7 +960,10 @@ async function runFeederTick(
       next: log.next.toFixed(2),
       pMax: log.pMax.toFixed(2),
     }));
-    console.log(`[controlLoop:${feederId}] no setpoint changes beyond epsilon`, deficitSummaries);
+    logger.info('[controlLoop] no setpoint changes beyond epsilon', {
+      feederId,
+      deficits: deficitSummaries,
+    });
   }
 
   return {
@@ -1048,7 +1052,9 @@ export async function runControlLoopCycle(
   try {
     offlineDevices = getOfflineDeviceIds(nowMs);
     if (offlineDevices.size > 0) {
-      console.warn(`[controlLoop] ${offlineDevices.size} device(s) offline across feeders`);
+      logger.warn('[controlLoop] devices offline across feeders', {
+        offlineCount: offlineDevices.size,
+      });
     }
     const devices = await getAllDevices();
     const feederIds = await getFeederIds();
@@ -1092,7 +1098,7 @@ export async function runControlLoopCycle(
     errored = true;
     recordFailure(getSafetyPolicy(), 'db', 'loop_error');
     markIterationError(err, Date.now());
-    console.error('[controlLoop] error', err);
+    logger.error({ err }, '[controlLoop] error');
     incrementCounter('derms_control_cycle_errors_total', { stage: 'compute' });
     incrementCounter('derms_db_error_total', { operation: 'read' });
   } finally {
@@ -1148,7 +1154,7 @@ export function startControlLoop(options?: {
       const result = await runControlLoopCycle();
       options?.onCycleComplete?.(result);
     } catch (err) {
-      console.error('[controlLoop] scheduled iteration failed', err);
+      logger.error({ err }, '[controlLoop] scheduled iteration failed');
     }
   }, intervalMs);
 

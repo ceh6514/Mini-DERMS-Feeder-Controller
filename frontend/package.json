@@ -7,8 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "npm run build:test && node --test --experimental-specifier-resolution=node \"./.tmp-tests/tests/**/*.js\"",
-    "build:test": "rm -rf .tmp-tests && tsc -p tsconfig.test.json && node -e \"require('fs').writeFileSync('./.tmp-tests/package.json', '{\\\"type\\\":\\\"commonjs\\\"}')\""
+    "test": "vitest run",
+    "test:watch": "vitest --watch"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -18,7 +18,12 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^5.1.1",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.2.0",
+    "@testing-library/user-event": "^14.5.2",
+    "jsdom": "^26.0.0",
     "typescript": "^5.5.4",
-    "vite": "^7.2.4"
+    "vite": "^7.2.4",
+    "vitest": "^2.1.4"
   }
 }

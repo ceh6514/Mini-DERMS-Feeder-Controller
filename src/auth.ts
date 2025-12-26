@@ -11,9 +11,12 @@ export interface AuthenticatedUser {
   role: UserRole;
 }
 
+type JwtAlgorithm = 'HS256';
+
 interface TokenPayload extends AuthenticatedUser {
   exp: number;
   iat: number;
+  nbf?: number;
   iss: string;
   aud: string;
 }
@@ -24,14 +27,20 @@ const roleRank: Record<UserRole, number> = {
   admin: 3,
 };
 
+const supportedAlgs: JwtAlgorithm[] = ['HS256'];
+
 function base64url(input: Buffer | string): string {
   return Buffer.isBuffer(input)
     ? input.toString('base64url')
     : Buffer.from(input).toString('base64url');
 }
 
-function signToken(user: AuthenticatedUser): string {
-  const header = { alg: 'HS256', typ: 'JWT' };
+function encodeHeader(alg: JwtAlgorithm) {
+  return base64url(JSON.stringify({ alg, typ: 'JWT' }));
+}
+
+async function signToken(user: AuthenticatedUser): Promise<string> {
+  const header = encodeHeader('HS256');
   const nowSeconds = Math.floor(Date.now() / 1000);
   const payload: TokenPayload = {
     ...user,
@@ -41,9 +50,8 @@ function signToken(user: AuthenticatedUser): string {
     aud: config.auth.audience,
   };
 
-  const encodedHeader = base64url(JSON.stringify(header));
   const encodedPayload = base64url(JSON.stringify(payload));
-  const signingInput = `${encodedHeader}.${encodedPayload}`;
+  const signingInput = `${header}.${encodedPayload}`;
   const signature = crypto
     .createHmac('sha256', config.auth.jwtSecret)
     .update(signingInput)
@@ -52,12 +60,43 @@ function signToken(user: AuthenticatedUser): string {
   return `${signingInput}.${signature}`;
 }
 
-function verifyToken(token: string): TokenPayload | null {
+function validateSignature(
+  headerB64: string,
+  payloadB64: string,
+  signatureB64: string,
+  alg: JwtAlgorithm,
+) {
+  if (!supportedAlgs.includes(alg)) {
+    return false;
+  }
+  const signingInput = `${headerB64}.${payloadB64}`;
+  const expectedSignature = crypto
+    .createHmac('sha256', config.auth.jwtSecret)
+    .update(signingInput)
+    .digest('base64url');
+  const provided = Buffer.from(signatureB64);
+  const expected = Buffer.from(expectedSignature);
+  return provided.length === expected.length && crypto.timingSafeEqual(provided, expected);
+}
+
+function validateClaims(payload: TokenPayload): payload is TokenPayload {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const tolerance = config.auth.clockToleranceSeconds;
+  if (typeof payload.exp !== 'number' || payload.exp < nowSeconds - tolerance) return false;
+  if (typeof payload.iat !== 'number' || payload.iat > nowSeconds + tolerance) return false;
+  if (payload.nbf !== undefined && payload.nbf > nowSeconds + tolerance) return false;
+  if (payload.iss !== config.auth.issuer || payload.aud !== config.auth.audience) return false;
+  if (!['viewer', 'operator', 'admin'].includes(payload.role)) return false;
+  if (!payload.username) return false;
+  return true;
+}
+
+async function verifyToken(token: string): Promise<TokenPayload | null> {
   const parts = token.split('.');
   if (parts.length !== 3) return null;
   const [headerB64, payloadB64, signature] = parts;
 
-  let header: { alg?: string; typ?: string };
+  let header: { alg?: JwtAlgorithm; typ?: string };
   try {
     header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf8'));
   } catch (err) {
@@ -65,35 +104,17 @@ function verifyToken(token: string): TokenPayload | null {
     return null;
   }
 
-  if (header.alg !== 'HS256' || header.typ !== 'JWT') {
+  if (header.typ !== 'JWT' || !header.alg) {
     return null;
   }
 
-  const signingInput = `${headerB64}.${payloadB64}`;
-  const expectedSignature = crypto
-    .createHmac('sha256', config.auth.jwtSecret)
-    .update(signingInput)
-    .digest('base64url');
-
-  const provided = Buffer.from(signature);
-  const expected = Buffer.from(expectedSignature);
-
-  if (provided.length !== expected.length) {
-    return null;
-  }
-
-  if (!crypto.timingSafeEqual(provided, expected)) {
+  if (!validateSignature(headerB64, payloadB64, signature, header.alg)) {
     return null;
   }
 
   try {
     const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8')) as TokenPayload;
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    if (payload.exp < nowSeconds) {
-      return null;
-    }
-
-    if (payload.iss !== config.auth.issuer || payload.aud !== config.auth.audience) {
+    if (!validateClaims(payload)) {
       return null;
     }
     return payload;
@@ -107,20 +128,24 @@ export interface AuthenticatedRequest extends Request {
   user?: AuthenticatedUser;
 }
 
-export function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  const authHeader = req.headers['authorization'];
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Missing bearer token' });
-  }
+export async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Missing bearer token' });
+    }
 
-  const token = authHeader.slice('Bearer '.length);
-  const payload = verifyToken(token);
-  if (!payload) {
-    return res.status(401).json({ error: 'Invalid or expired token' });
-  }
+    const token = authHeader.slice('Bearer '.length);
+    const payload = await verifyToken(token);
+    if (!payload) {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
 
-  req.user = { username: payload.username, role: payload.role };
-  return next();
+    req.user = { username: payload.username, role: payload.role };
+    return next();
+  } catch (err) {
+    return next(err);
+  }
 }
 
 export function requireRole(role: UserRole) {
@@ -158,7 +183,7 @@ authRouter.post('/login', async (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
-  const token = signToken({ username: user.username, role: user.role });
+  const token = await signToken({ username: user.username, role: user.role });
   res.json({ token, user: { username: user.username, role: user.role } });
 });
 
