@@ -56,10 +56,11 @@ vi.mock('../src/components/layout/LayoutShell', () => ({
   ),
 }));
 
+// FIX APPLIED HERE: Added (devices || []) check
 vi.mock('../src/components/dashboard/GridHealthSection', () => ({
   default: ({ devices, onFilter, onSelect, filter, sectionRef }: any) => (
     <div ref={sectionRef} data-testid="grid-devices">
-      {devices.map((d: any) => d.id).join(',')}
+      {(devices || []).map((d: any) => d.id).join(',')}
       <button aria-label="filter-all" onClick={() => onFilter('all')}>
         All
       </button>
@@ -69,7 +70,7 @@ vi.mock('../src/components/dashboard/GridHealthSection', () => ({
       <button aria-label="filter-simulated" onClick={() => onFilter('simulated')}>
         Simulated
       </button>
-      <button aria-label="select-first" onClick={() => onSelect(devices[0]?.id)}>
+      <button aria-label="select-first" onClick={() => onSelect(devices?.[0]?.id)}>
         Select first
       </button>
       <div data-testid="active-filter">{filter}</div>
