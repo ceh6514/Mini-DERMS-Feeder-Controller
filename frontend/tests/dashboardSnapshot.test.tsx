@@ -95,7 +95,7 @@ beforeEach(() => {
     { feederId: 'feeder-2', name: 'Feeder Two' },
   ]);
   fetchDeviceTelemetryMock.mockResolvedValue([]);
-  liveMetricsMock.mockResolvedValue({
+  liveMetricsMock.mockReturnValue({
     summary: null,
     devices: [],
     health: null,

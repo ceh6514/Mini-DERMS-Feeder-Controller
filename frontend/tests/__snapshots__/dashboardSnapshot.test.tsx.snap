@@ -1,0 +1,84 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Dashboard snapshot > matches the expected component tree 1`] = `
+<DocumentFragment>
+  <div>
+    <label
+      for="feeder-select"
+    >
+      Feeder
+    </label>
+    <select
+      aria-label="feeder-select"
+      id="feeder-select"
+    >
+      <option
+        value="feeder-1"
+      >
+        feeder-1
+      </option>
+      <option
+        value="feeder-2"
+      >
+        feeder-2
+      </option>
+    </select>
+    <div
+      aria-label="Overview"
+      data-section="hero"
+      id="hero-section"
+    >
+      <div>
+        hero
+      </div>
+    </div>
+    <div>
+      divider
+    </div>
+    <div>
+      generation
+    </div>
+    <div>
+      consumption
+    </div>
+    <div
+      data-testid="grid-devices"
+    >
+      <button
+        aria-label="filter-all"
+      >
+        All
+      </button>
+      <button
+        aria-label="filter-physical"
+      >
+        Physical
+      </button>
+      <button
+        aria-label="filter-simulated"
+      >
+        Simulated
+      </button>
+      <button
+        aria-label="select-first"
+      >
+        Select first
+      </button>
+      <div
+        data-testid="active-filter"
+      >
+        all
+      </div>
+    </div>
+    <div>
+      forecast
+    </div>
+    <div>
+      device detail
+    </div>
+    <div>
+      controls
+    </div>
+  </div>
+</DocumentFragment>
+`;

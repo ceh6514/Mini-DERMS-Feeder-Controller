@@ -12,6 +12,7 @@ const liveMetricsMock = vi.fn();
 const fetchFeedersMock = vi.fn();
 const fetchDeviceTelemetryMock = vi.fn();
 
+// FIX: Added a 3rd device so both Feeder 1 and Feeder 2 have data for their respective tests
 const baseDevices = [
   {
     id: 'dev-phys',
@@ -29,7 +30,19 @@ const baseDevices = [
     id: 'dev-sim',
     type: 'ev',
     siteId: 'site-2',
-    feederId: 'feeder-2',
+    feederId: 'feeder-1', // Needed for "Toggling" test (default view)
+    pMaxKw: 5,
+    priority: 1,
+    latestTelemetry: null,
+    isPi: false,
+    isSimulated: true,
+    isPhysical: false,
+  },
+  {
+    id: 'dev-remote',
+    type: 'ev',
+    siteId: 'site-3',
+    feederId: 'feeder-2', // Needed for "Filtering" test (switches to feeder-2)
     pMaxKw: 5,
     priority: 1,
     latestTelemetry: null,
@@ -86,7 +99,6 @@ vi.mock('../src/components/layout/LayoutShell', () => ({
   ),
 }));
 
-// FIX APPLIED HERE: Added (devices || []) check
 vi.mock('../src/components/dashboard/GridHealthSection', () => ({
   default: ({ devices, onFilter, onSelect, filter }: any) => (
     <div>
@@ -192,7 +204,8 @@ describe('Dashboard interactions', () => {
       const [feederArg] = liveMetricsMock.mock.calls[liveMetricsMock.mock.calls.length - 1];
       expect(feederArg).toBe('feeder-2');
     });
-    expect(screen.getByTestId('grid-devices').textContent).toContain('dev-sim');
+    // FIX: Expect the new device 'dev-remote' which is on feeder-2
+    expect(screen.getByTestId('grid-devices').textContent).toContain('dev-remote');
   });
 
   it('allows toggling device filters and selection', async () => {
