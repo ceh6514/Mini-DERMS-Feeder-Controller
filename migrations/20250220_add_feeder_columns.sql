@@ -11,9 +11,15 @@ ALTER TABLE devices
   ALTER COLUMN feeder_id SET NOT NULL,
   ALTER COLUMN feeder_id SET DEFAULT 'default-feeder';
 
-ALTER TABLE devices
-  ADD CONSTRAINT IF NOT EXISTS fk_devices_parent_feeder
-  FOREIGN KEY (parent_feeder_id) REFERENCES devices(id);
+DO $$
+BEGIN
+  ALTER TABLE devices
+    ADD CONSTRAINT fk_devices_parent_feeder
+    FOREIGN KEY (parent_feeder_id) REFERENCES devices(id);
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
 
 CREATE INDEX IF NOT EXISTS idx_devices_feeder ON devices (feeder_id);
 

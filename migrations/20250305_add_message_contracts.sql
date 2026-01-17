@@ -16,10 +16,22 @@ ALTER TABLE telemetry
   ALTER COLUMN message_version SET NOT NULL,
   ALTER COLUMN message_type SET NOT NULL;
 
-ALTER TABLE telemetry
-  ADD CONSTRAINT IF NOT EXISTS telemetry_message_id_unique UNIQUE (message_id);
+DO $$
+BEGIN
+  ALTER TABLE telemetry
+    ADD CONSTRAINT telemetry_message_id_unique UNIQUE (message_id);
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
-ALTER TABLE telemetry
-  ADD CONSTRAINT IF NOT EXISTS telemetry_device_ts_type_key UNIQUE (device_id, ts, message_type);
+
+DO $$
+BEGIN
+  ALTER TABLE telemetry
+    ADD CONSTRAINT telemetry_device_ts_type_key UNIQUE (device_id, ts, message_type);
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
 
 CREATE INDEX IF NOT EXISTS idx_telemetry_message_type_ts ON telemetry (message_type, ts DESC);
