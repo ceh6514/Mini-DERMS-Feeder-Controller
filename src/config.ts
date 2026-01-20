@@ -206,7 +206,10 @@ const config: Config = {
   logLevel: process.env.LOG_LEVEL ?? 'info',
   logPretty: (process.env.LOG_PRETTY ?? 'true').toLowerCase() === 'true',
   ingress: {
-    corsAllowedOrigins: (process.env.CORS_ALLOWED_ORIGINS ?? 'http://localhost:3000')
+    corsAllowedOrigins: (
+      process.env.CORS_ALLOWED_ORIGINS ??
+      'http://localhost:3000,http://localhost:5173,http://localhost:4173'
+    )
       .split(',')
       .map((o) => o.trim())
       .filter(Boolean),
