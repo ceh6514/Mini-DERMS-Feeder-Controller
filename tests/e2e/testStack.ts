@@ -256,9 +256,12 @@ export async function startTestStack(envOverrides: Record<string, string> = {}):
 
   Object.assign(process.env, sharedEnv);
 
+  const configModule = await import('../../src/config');
+  configModule.reloadConfig();
+
   const { startServer } = await import('../../src/server');
   const { runControlLoopCycle } = await import('../../src/controllers/controlLoop');
-  const { pool: dbPool } = await import('../../src/db');
+  const dbModule = await import('../../src/db');
 
   const server: StartedServer = await startServer({ startControlLoop: false });
   const baseUrl = `http://localhost:${server.port}`;
@@ -330,7 +333,9 @@ export async function startTestStack(envOverrides: Record<string, string> = {}):
   return {
     topicPrefix,
     baseUrl,
-    dbPool,
+    dbPool: {
+      query: (...args: Parameters<typeof dbModule.pool.query>) => dbModule.pool.query(...args),
+    },
     stop,
     publishTelemetry,
     createSetpointCollector,

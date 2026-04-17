@@ -201,7 +201,8 @@ export function parseAuthUsers(raw = process.env.AUTH_USERS): Config['auth']['us
   });
 }
 
-const config: Config = {
+function buildConfig(): Config {
+  return {
   port: Number(process.env.PORT ?? 3001),
   logLevel: process.env.LOG_LEVEL ?? 'info',
   logPretty: (process.env.LOG_PRETTY ?? 'true').toLowerCase() === 'true',
@@ -312,6 +313,15 @@ const config: Config = {
     users: parseAuthUsers(),
   },
 };
+}
+
+const config: Config = buildConfig();
+
+export function reloadConfig(): Config {
+  const next = buildConfig();
+  Object.assign(config, next);
+  return config;
+}
 
 export function getAuthConfigStatus() {
   const issues: string[] = [];
