@@ -4,7 +4,7 @@ set -euo pipefail
 TEST_DIR="dist/tests/e2e"
 
 skip_e2e() {
-  echo "$1"
+  echo "SKIPPED: $1"
   exit 0
 }
 
