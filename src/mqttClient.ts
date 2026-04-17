@@ -21,8 +21,11 @@ import { setMqttReady } from './state/readiness';
 
 export let mqttClient: NodeMqttClient | null = null;
 let lastError: string | null = null;
-const baseTopic = config.mqtt.topicPrefix.replace(/\/+$/, '');
 let telemetryHandler: TelemetryHandler | null = null;
+
+function getBaseTopic(): string {
+  return config.mqtt.topicPrefix.replace(/\/+$/, '');
+}
 
 function getTelemetryHandler() {
   if (!telemetryHandler) {
@@ -162,7 +165,7 @@ export async function startMqttClient(): Promise<void> {
       port: config.mqtt.port,
     });
 
-    mqttClient.subscribe(`${baseTopic}/telemetry/#`, (err: Error | null) => {
+    mqttClient.subscribe(`${getBaseTopic()}/telemetry/#`, (err: Error | null) => {
       if (err) {
         logger.error({ err }, '[mqttClient] subscribe error');
       } else {
@@ -199,7 +202,7 @@ export async function startMqttClient(): Promise<void> {
 }
 
 export async function handleTelemetryMessage(topic: string, payload: Buffer) {
-  if (topic.startsWith(`${baseTopic}/telemetry/`)) {
+  if (topic.startsWith(`${getBaseTopic()}/telemetry/`)) {
     await parseAndStoreMessage(topic, payload);
   }
 }
