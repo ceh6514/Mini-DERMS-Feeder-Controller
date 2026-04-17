@@ -24,7 +24,7 @@ if ! docker info >/dev/null 2>&1; then
   skip_e2e "Docker daemon unavailable; skipping e2e suite."
 fi
 
-mapfile -t TEST_FILES < <(find "$TEST_DIR" -type f \( -name "*.test.js" -o -name "*.spec.js" \) -print)
+mapfile -t TEST_FILES < <(find "$TEST_DIR" -type f \( -name "*.test.js" -o -name "*.spec.js" -o -name "*.e2e.js" \) -print)
 
 if [[ ${#TEST_FILES[@]} -eq 0 ]]; then
   skip_e2e "No e2e tests found; skipping."
