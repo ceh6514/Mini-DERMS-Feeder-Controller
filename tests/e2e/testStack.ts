@@ -268,19 +268,66 @@ export async function startTestStack(envOverrides: Record<string, string> = {}):
 
   const publisher = await createMqttPublisher(mqttHost, mqttPort);
 
-  async function publishTelemetry(deviceId: string, payload: Partial<Record<string, unknown>>): Promise<void> {
-    const telemetry = {
-      deviceId,
+  async function publishTelemetry(
+    deviceId: string,
+    payload: Partial<Record<string, unknown>>,
+  ): Promise<void> {
+    const legacy = {
       type: 'ev',
       ts: new Date().toISOString(),
       p_actual_kw: 1,
-      p_setpoint_kw: 1,
       soc: 0.5,
       site_id: 'site-1',
       feeder_id: 'feeder-1',
       p_max_kw: 5,
-      priority: 1,
       ...payload,
+    };
+
+    const tsValue =
+      typeof legacy.ts === 'string'
+        ? Date.parse(legacy.ts)
+        : typeof legacy.ts === 'number'
+          ? legacy.ts
+          : Date.now();
+    const timestampMs = Number.isFinite(tsValue) ? tsValue : Date.now();
+    const powerKw = Number(legacy.p_actual_kw);
+    const soc =
+      legacy.soc === undefined || legacy.soc === null
+        ? undefined
+        : Number(legacy.soc);
+    const maxKw =
+      legacy.p_max_kw === undefined || legacy.p_max_kw === null
+        ? undefined
+        : Number(legacy.p_max_kw);
+
+    const rawType = String(legacy.type);
+    const deviceType: 'ev' | 'battery' | 'pv' =
+      rawType === 'battery' || rawType === 'pv' ? rawType : 'ev';
+
+    const telemetry = {
+      v: 1,
+      messageType: 'telemetry' as const,
+      messageId: randomUUID(),
+      deviceId,
+      deviceType,
+      timestampMs,
+      source: 'simulator' as const,
+      payload: {
+        readings: {
+          powerKw,
+          ...(soc === undefined ? {} : { soc }),
+        },
+        status: { online: true },
+        ...(maxKw === undefined
+          ? {}
+          : {
+              capabilities: {
+                maxDischargeKw: maxKw,
+              },
+            }),
+        ...(legacy.site_id ? { siteId: String(legacy.site_id) } : {}),
+        ...(legacy.feeder_id ? { feederId: String(legacy.feeder_id) } : {}),
+      },
     };
 
     const topic = `${topicPrefix}/telemetry/${deviceId}`;
