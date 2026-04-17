@@ -212,7 +212,27 @@ export async function insertTelemetryBatch(
         row.estimated_power_w ?? 0,
       );
 
-      const placeholders = columns.map((_, colIdx) => `$${base + colIdx + 1}`).join(', ');
+      const casts = [
+        '::uuid',
+        '::integer',
+        '::text',
+        '::timestamptz',
+        '::text',
+        '::text',
+        '::timestamptz',
+        '::text',
+        '::real',
+        '::real',
+        '::real',
+        '::text',
+        '::text',
+        '::real',
+        '::real',
+        '::real',
+      ];
+      const placeholders = casts
+        .map((cast, colIdx) => `$${base + colIdx + 1}${cast}`)
+        .join(', ');
       return `(${placeholders})`;
     })
     .join(', ');
