@@ -39,13 +39,14 @@ docker compose --profile sim up --build
 - Simulator: auto-starts with the `sim` profile to publish sample telemetry.
 - Stop everything with `docker compose down` (or `npm run stop:stack`).
 - Need different creds? Change `DB_USER`/`DB_PASSWORD` in `.env` and rerun the compose command (the Postgres container will use them on first create).
+- In Compose mode, the backend service always uses `DB_HOST=db` and `MQTT_HOST=mosquitto` via `docker-compose.yml` overrides, regardless of local `.env` host defaults.
 
 The rebuilt dashboard highlights Pi-based DERs with a "Physical" badge, lets you filter by origin, and visualizes SOC distribution, tracking error, and setpoint-vs-actual curves. Select a device row to drive the animated charts.
 
 ## 🏗️ Run manually (separate terminals)
 If you prefer to run pieces yourself:
 
-1. **Database and MQTT**: provision PostgreSQL and an MQTT broker (defaults match `.env.example`). Ensure the DB user can create tables.
+1. **Database and MQTT**: provision PostgreSQL and an MQTT broker. For manual local mode, `.env.example` defaults to `DB_HOST=localhost` and `MQTT_HOST=localhost`; ensure the DB user can create tables.
 2. **Backend (root)**:
    ```bash
    npm install

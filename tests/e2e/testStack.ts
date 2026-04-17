@@ -43,9 +43,24 @@ interface StartedTestContainer {
 
 function buildAuthUsers() {
   return JSON.stringify([
-    { username: 'admin', password: 'Adm1n!2345678', role: 'admin' },
-    { username: 'operator', password: 'Op3rator!23456', role: 'operator' },
-    { username: 'viewer', password: 'View3r!23456', role: 'viewer' },
+    {
+      username: 'admin',
+      passwordHash:
+        'scrypt:xLh0jB75AaU76rkvzo6lQQ==:hYlm2cAHnEsPIOBqLtEkkLw+5sqqp65+hGdd7G5JsMYpuxphfH4waWJGO7OXqkkKYxV//BFqIlSomNBBW2y2Gg==',
+      role: 'admin',
+    },
+    {
+      username: 'operator',
+      passwordHash:
+        'scrypt:/ZSPTYQIurOQ9HDzhFjARg==:40qROaCMgsp2YnZEtWxHxGi6U2R9XM32nqRbevEYACh6Whrl+BRsiz3fYgUYhWirtWUmKONfn5sxBxm1QcRNOQ==',
+      role: 'operator',
+    },
+    {
+      username: 'viewer',
+      passwordHash:
+        'scrypt:Klf58UloD5s4RWjAAWRMRg==:jbf1FS/JO1XIydqzNxsR9WnNfTsweGyegtiN9iO400KKpcPn48VCYDGjOqqFEIjtKuiP6ubG88Q5+9gmJK66Pg==',
+      role: 'viewer',
+    },
   ]);
 }
 
