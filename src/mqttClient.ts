@@ -1,13 +1,5 @@
-if (typeof global.navigator === 'undefined') {
-  // @ts-ignore
-  global.navigator = {
-    userAgent: 'node',
-    language: 'en-US'
-  };
-}
-
 import fs from 'fs';
-import mqtt from 'mqtt/dist/mqtt';
+import mqtt from 'mqtt';
 /**
  * MQTT ingestion client.
  *
