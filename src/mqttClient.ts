@@ -14,7 +14,7 @@ import { upsertDevice } from './repositories/devicesRepo';
 import { insertTelemetry, insertTelemetryBatch } from './repositories/telemetryRepo';
 import { recordHeartbeat } from './state/controlLoopMonitor';
 import { TelemetryHandler } from './messaging/telemetryHandler';
-import { ContractValidationError } from './contracts';
+import { ContractValidationError, validateTelemetryMessage } from './contracts';
 import logger from './logger';
 import { incrementCounter } from './observability/metrics';
 import { setMqttReady } from './state/readiness';
@@ -77,19 +77,10 @@ async function parseAndStoreMessage(topic: string, payload: Buffer) {
     }
 
     const raw = JSON.parse(payload.toString('utf-8')) as Record<string, unknown>;
-    const handler = getTelemetryHandler();
-    const result = (await Promise.race([
-      handler.handle(raw),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error('telemetry_processing_timeout')),
-          config.mqtt.processingTimeoutMs,
-        ),
-      ),
-    ])) as Awaited<ReturnType<TelemetryHandler['handle']>>;
-
-    if (!result.parsed) return;
-    const telemetry = result.parsed;
+    const telemetry = validateTelemetryMessage(raw);
+    if (telemetry.timestampMs > Date.now() + 30_000) {
+      throw new ContractValidationError('Telemetry timestamp is too far in the future');
+    }
 
     await upsertDevice({
       id: telemetry.deviceId,
@@ -104,6 +95,17 @@ async function parseAndStoreMessage(topic: string, payload: Buffer) {
         config.feederDefaultLimitKw,
       priority: null,
     });
+
+    const handler = getTelemetryHandler();
+    const result = (await Promise.race([
+      handler.handle(telemetry),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error('telemetry_processing_timeout')),
+          config.mqtt.processingTimeoutMs,
+        ),
+      ),
+    ])) as Awaited<ReturnType<TelemetryHandler['handle']>>;
 
     if (result.newest) {
       recordHeartbeat(telemetry.deviceId, telemetry.timestampMs);

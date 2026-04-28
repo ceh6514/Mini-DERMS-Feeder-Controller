@@ -195,7 +195,13 @@ export class TelemetryHandler {
       const rows = batch.map((item) => item.row);
       let statuses: TelemetryPersistResult[] | null = null;
       if (this.persistence.saveBatch) {
-        statuses = await this.persistence.saveBatch(rows);
+        try {
+          statuses = await this.persistence.saveBatch(rows);
+        } catch (err) {
+          const code = (err as { code?: string } | null)?.code;
+          if (code !== '21000') throw err;
+          statuses = null;
+        }
       }
       if (!statuses || statuses.length !== rows.length) {
         statuses = [];

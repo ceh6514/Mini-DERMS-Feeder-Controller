@@ -43,7 +43,24 @@ describe('mqttClient telemetry guards', () => {
     });
 
     const errorSpy = mock.method(logger, 'error');
-    await handleTelemetryMessage(telemetryTopic, Buffer.from('{}'));
+    const tsMs = Date.now();
+    await handleTelemetryMessage(
+      telemetryTopic,
+      Buffer.from(JSON.stringify({
+        v: 1,
+        messageType: 'telemetry',
+        messageId: '11111111-1111-4111-8111-111111111111',
+        deviceId: 'device-1',
+        deviceType: 'ev',
+        timestampMs: tsMs,
+        payload: {
+          readings: { powerKw: 1.5 },
+          status: { online: true },
+          siteId: 'site-1',
+          feederId: 'feeder-1',
+        },
+      })),
+    );
 
     assert.ok(errorSpy.mock.callCount() > 0, 'processing timeout should be reported');
   });

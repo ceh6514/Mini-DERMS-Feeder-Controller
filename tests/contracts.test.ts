@@ -91,6 +91,35 @@ describe('contract validation and idempotency', () => {
     assert.equal(batches[0].length, 2);
   });
 
+  it('falls back to row-by-row persistence on batch conflict error', async () => {
+    const batches: any[][] = [];
+    handler = new TelemetryHandler(
+      {
+        saveBatch: async (rows) => {
+          batches.push(rows);
+          const err = new Error('same row updated twice') as Error & { code?: string };
+          err.code = '21000';
+          throw err;
+        },
+        save: async (row) => {
+          saved.push(row);
+          return 'inserted';
+        },
+      },
+      { batchSize: 2, flushIntervalMs: 0, maxQueueSize: 10 },
+    );
+
+    const now = Date.now();
+    const results = await Promise.all([
+      handler.handle(sampleTelemetry(now, '11111111-1111-4111-8111-111111111118')),
+      handler.handle(sampleTelemetry(now, '11111111-1111-4111-8111-111111111119')),
+    ]);
+
+    assert.equal(results.length, 2);
+    assert.equal(batches.length, 1);
+    assert.equal(saved.length, 2);
+  });
+
   it('rejects telemetry when the queue is full', async () => {
     handler = new TelemetryHandler(
       {
